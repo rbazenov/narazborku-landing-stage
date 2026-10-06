@@ -4470,11 +4470,14 @@ acc.addEventListener('submit', function (e) {
     e.preventDefault(); var inp = $('#chatIn'), txt = inp.value.trim(); if (!txt) return;
     var c = findBy(S.convs, 'id', f.dataset.id);
     if (c && c.server && window.NRShopMessages) {
-      inp.value = '';                                       // сообщение уходит продавцу в магазин
+      inp.value = '';
+      /* показываем сообщение в переписке сразу: если связь пропадёт, его дошлёт очередь */
+      var A = window.NRAccount, mid = 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      c.msgs.push({ f: 'm', t: Date.now(), x: txt, pending: true, mid: mid }); c.t = Date.now(); save(); rr();
       window.NRShopMessages.act(c.id, { action: 'send', body: txt })
-        .then(function () { return window.NRShopMessages.pull(); })
+        .then(function () { if (A && A.confirmSent) A.confirmSent(mid); return window.NRShopMessages.pull(); })
         .then(function () { var w = $('#chatW'); if (w) w.scrollTop = w.scrollHeight; })
-        .catch(function (err) { inp.value = txt; if (window.console && console.log) console.log('[чат] сообщение не отправлено:', err && err.message); });
+        .catch(function (err) { if (window.console && console.log) console.log('[чат] сообщение уйдёт после восстановления связи:', err && err.message); });
       return;
     }
     c.msgs.push({ f: 'm', t: Date.now(), x: txt }); c.t = Date.now(); save();
@@ -4720,10 +4723,116 @@ window.NRAccount = {
   },
   serverMode: function () { return !!S.server; },
   /* ---------- диалоги покупателя из магазина ---------- */
+  /* Слияние: отправленное покупателем сообщение видно в кабинете сразу — даже если
+     магазин его ещё не принял. Когда магазин подтвердит, дубликат уходит сам. */
   applyServerMessages: function (list) {
-    S.convs = (list || []).slice();
+    var old = (S.convs || []), server = (list || []).slice();
+    function same(a, b) { return String(a.x) === String(b.x) && Math.abs((a.t || 0) - (b.t || 0)) < 120000; }
+    function take(target, incoming) {
+      var used = [];
+      return (incoming || []).filter(function (m) {
+        for (var i = 0; i < target.length; i++) {
+          if (used[i]) continue;
+          if (same(target[i], m)) { used[i] = true; return false; }   /* такое сообщение уже есть в магазине */
+        }
+        return true;                                                  /* ещё не дошло — показываем локальную копию */
+      });
+    }
+    var leftLocal = [];
+    old.filter(function (c) { return c.local; }).forEach(function (lc) {
+      var hit = null;
+      for (var i = 0; i < server.length; i++) {
+        var isSame = lc.pid ? String(server[i].pid || '') === String(lc.pid) : server[i].title === lc.title;
+        if (isSame) { hit = server[i]; break; }
+      }
+      if (!hit) { leftLocal.push(lc); return; }
+      take(hit.msgs, lc.msgs).forEach(function (m) { hit.msgs.push(m); });
+      hit.t = Math.max(hit.t || 0, lc.t || 0);
+      if (lc.pinned) hit.pinned = true;
+      if (lc.important) hit.important = true;
+    });
+    server.forEach(function (nc) {
+      var oc = null;
+      for (var i = 0; i < old.length; i++) if (!old[i].local && String(old[i].id) === String(nc.id)) { oc = old[i]; break; }
+      if (!oc) return;
+      var pend = (oc.msgs || []).filter(function (m) { return m.pending; });
+      if (!pend.length) return;
+      take(nc.msgs, pend).forEach(function (m) { nc.msgs.push(m); });
+      nc.t = Math.max(nc.t || 0, oc.t || 0);
+    });
+    S.convs = server.concat(leftLocal);
     save();
     if (!acc.hidden) render();
+  },
+  /* ---------- покупатель написал продавцу из карточки товара ---------- */
+  noteLocalMessage: function (info) {
+    info = info || {};
+    var pid = String(info.pid || ''), c = null;
+    for (var i = 0; i < S.convs.length; i++) {
+      var x = S.convs[i];
+      if (x.local && (pid ? String(x.pid || '') === pid : x.title === (info.title || x.title))) { c = x; break; }
+      if (pid && String(x.pid || '') === pid) { c = x; break; }     /* диалог по этому товару уже есть */
+    }
+    if (!c) {
+      c = { id: 'local:' + (pid || 'seller'), local: true, pid: pid, icon: info.icon || '💬',
+            title: info.title || 'Чат с продавцом', who: 'Наразборку · продавец', ref: 'Чат с продавцом',
+            t: Date.now(), unread: false, important: false, pinned: false, blocked: false, msgs: [] };
+      S.convs.push(c);
+    }
+    if (info.icon) c.icon = info.icon;
+    if (info.title) c.title = info.title;
+    var mid = 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    c.msgs.push({ f: 'm', t: Date.now(), x: String(info.body || ''), pending: true, mid: mid });
+    c.t = Date.now();
+    save();
+    if (!acc.hidden) render();
+    var A = window.NRAccount;
+    if (!A._nrmTimer) A._nrmTimer = setInterval(function () {
+      if (!A.pendingMessages()) { clearInterval(A._nrmTimer); A._nrmTimer = null; return; }
+      A.flushPending();
+    }, 8000);
+    A.flushPending();
+    return mid;
+  },
+  /* сообщение принято магазином (отправил сам чат) — из очереди его убираем */
+  confirmSent: function (mid) {
+    if (!mid) return;
+    (S.convs || []).forEach(function (c) {
+      (c.msgs || []).forEach(function (m) { if (m.mid === mid) { m.pending = false; m.sending = false; } });
+    });
+    save();
+  },
+  /* диалоги кабинета (для проверок и отладки) */
+  conversations: function () { return (S.convs || []).slice(); },
+  /* сколько сообщений ещё не ушло в магазин */
+  pendingMessages: function () {
+    var n = 0;
+    (S.convs || []).forEach(function (c) { (c.msgs || []).forEach(function (m) { if (m.pending) n++; }); });
+    return n;
+  },
+  /* повторная отправка того, что не ушло */
+  flushPending: function () {
+    var A = window.NRAccount;
+    if (A._nrmBusy) return Promise.resolve();
+    if (!window.NRShopMessages || !window.NRShopMessages.available || !window.NRShopMessages.available()) return Promise.resolve();
+    var jobs = [];
+    (S.convs || []).forEach(function (c) {
+      (c.msgs || []).filter(function (m) { return m.pending && !m.sending && (m.tries || 0) < 20; }).forEach(function (m) {
+        jobs.push(function () {
+          m.sending = true;                                  /* одну и ту же запись не отправляем дважды */
+          var p = c.local
+            ? window.NRShopMessages.create({ product_id: c.pid || '', product_title: c.title || '', product_icon: c.icon || '',
+                                             subject: c.title || 'Вопрос с лендинга', body: m.x })
+            : window.NRShopMessages.act(c.id, { action: 'send', body: m.x });
+          return p.then(function () { m.pending = false; m.sending = false; save(); },
+                        function () { m.sending = false; m.tries = (m.tries || 0) + 1; save(); });
+        });
+      });
+    });
+    if (!jobs.length) return Promise.resolve();
+    A._nrmBusy = true;
+    return jobs.reduce(function (p, job) { return p.then(job).catch(function () { }); }, Promise.resolve())
+      .then(function () { A._nrmBusy = false; return window.NRShopMessages.pull().catch(function () { }); });
   },
   cabinetOpen: function () { return !acc.hidden; },
   openCabinet: function (section) {
@@ -5344,7 +5453,7 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
   }
   function mapConv(c) {
     return {
-      id: c.id, server: true, icon: c.product_icon || '💬', title: c.title,
+      id: c.id, server: true, pid: c.product_id, icon: c.product_icon || '💬', title: c.title,
       who: 'Наразборку · продавец', ref: c.order_ref || 'Чат с продавцом',
       t: c.last_message_ts || (c.last_message_at ? Date.parse(c.last_message_at) : 0) || Date.now(),
       unread: Number(c.unread_customer || 0) > 0,
@@ -5378,12 +5487,17 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
     thread: function (id) { return api('/store/messages/' + id + '?client_id=' + encodeURIComponent(clientId())); }
   };
 
-  /* при открытии кабинета подтягиваем свежие заказы и переписку из магазина */
+  /* при открытии кабинета подтягиваем свежие заказы и переписку из магазина.
+     Если связи ещё нет — ждём её: кабинет не должен оставаться пустым. */
   window.addEventListener('account:open', function () {
-    if (!shop()) return;
-    pullMessages().catch(function () { /* кабинет останется на прежних данных */ });
-    if (!state.jwt) return;
-    pull().catch(function () { /* кабинет останется на прежних данных */ });
+    var A = window.NRAccount;
+    if (A && typeof A.flushPending === 'function') A.flushPending();     /* досылаем неотправленное */
+    whenShopReady(function () {
+      if (A && typeof A.flushPending === 'function') A.flushPending();
+      pullMessages().catch(function () { /* кабинет останется на прежних данных */ });
+      if (!state.jwt) return;
+      pull().catch(function () { /* кабинет останется на прежних данных */ });
+    });
   });
 
   /* пока витрина не получила адрес магазина, запросы отправлять некуда */
@@ -5414,6 +5528,12 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
 
   /* сообщаем форме заказа, что оформление идёт через магазин */
   whenShopReady(function () { window.dispatchEvent(new Event('shop:ready')); });
+
+  /* как только связь с магазином появилась — досылаем то, что не ушло раньше */
+  window.addEventListener('shop:ready', function () {
+    var A = window.NRAccount;
+    if (A && typeof A.flushPending === 'function') A.flushPending();
+  });
 })();
 </script>
 <div class="sc-bar" id="scBar" hidden>
@@ -5529,19 +5649,31 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
   }
 
   /* ---------- отправка сообщения ---------- */
+  /* сообщение сразу попадает в кабинет покупателя, даже если магазин его ещё не принял.
+     Возвращает отметку сообщения — по ней чат потом скажет кабинету «магазин принял». */
+  function remember(text) {
+    var it = st.item || {};
+    if (window.NRAccount && typeof window.NRAccount.noteLocalMessage === 'function')
+      return window.NRAccount.noteLocalMessage({ pid: it.id, title: it.title, icon: it.icon, body: text });
+    return '';
+  }
+  function confirmSent(mid) {
+    if (mid && window.NRAccount && typeof window.NRAccount.confirmSent === 'function') window.NRAccount.confirmSent(mid);
+  }
   function send(text) {
     if (!text || st.busy) return;
+    var mid = remember(text);
     if (!ready()) {
-      /* магазин ещё не поднялся: сообщение сразу в переписке, отправляем при появлении связи */
-      var pend = add(bubbleHTML({ sender: 'customer', body: text, t: Date.now() }), 'mine');
-      whenReady(function () { pend.remove(); send(text); }, function () {
-        pend.remove();
-        if (!input.value) input.value = text;   /* текст возвращаем в поле, чтобы не потерялся */
-      });
+      /* связь ещё не установлена: сообщение уже в кабинете и в очереди отправки,
+         поэтому здесь просто показываем его в переписке */
+      add(bubbleHTML({ sender: 'customer', body: text, t: Date.now() }), 'mine');
+      noteText(NOTE_OK);
+      if (!mid) whenReady(function () { send(text); });      /* подстраховка, если кабинета нет */
+      else whenReady(function () { refresh(true); });        /* покажем ответ продавца, когда связь появится */
       return;
     }
     st.busy = true;
-    var mine = add(bubbleHTML({ sender: 'customer', body: text, t: Date.now() }), 'mine');
+    add(bubbleHTML({ sender: 'customer', body: text, t: Date.now() }), 'mine');
     if (!st.convId) {
       api().create({
         product_id: (st.item && st.item.id) || '',
@@ -5551,6 +5683,7 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
         body: text
       }).then(function (r) {
         st.busy = false;
+        confirmSent(mid);
         if (r && r.conversation && r.conversation.id) st.convId = r.conversation.id;
         noteText('Отправлено. ' + NOTE_OK);
         return refresh(true);
@@ -5558,18 +5691,17 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
     } else {
       api().act(st.convId, { action: 'send', body: text }).then(function () {
         st.busy = false;
+        confirmSent(mid);
         noteText('Отправлено. ' + NOTE_OK);
         return refresh(true);
       }).catch(fail);
     }
-    /* Если отправить не удалось — убираем неподтверждённое сообщение из переписки
-       и возвращаем текст в поле ввода. В самом окне никаких технических надписей. */
+    /* Отправить сразу не удалось — сообщение остаётся в переписке и в кабинете,
+       очередь дошлёт его, как только появится связь. Никаких технических надписей. */
     function fail(e) {
       st.busy = false;
-      if (mine && mine.parentNode) mine.remove();
-      if (!input.value) input.value = text;
       noteText(NOTE_OK);
-      if (window.console && console.log) console.log('[чат] сообщение не отправлено:', e && e.message);
+      if (window.console && console.log) console.log('[чат] сообщение уйдёт после восстановления связи:', e && e.message);
     }
   }
 
