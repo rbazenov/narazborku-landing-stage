@@ -2290,8 +2290,13 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
         <button class="p-sell" type="button" data-sell data-id="${it.id}" aria-label="Написать продавцу: ${esc(it.title)}">✍️ Написать продавцу</button>
       </div></article>`;
   }
+  /* Лендинг и личный кабинет не показываются одновременно: если кабинет открыт,
+     разделы лендинга остаются скрытыми, даже когда витрина синхронизируется в фоне
+     и зовёт render() (иначе карточки товаров возвращаются поверх кабинета). */
+  function cabinetOpen() { var app = document.getElementById('accountApp'); return !!(app && !app.hidden); }
   function render() {
     const hasQuery = !!(state.q || state.cat || state.vin);
+    const inCab = cabinetOpen();
     cartPage.hidden = true;
     favoritesPage.hidden = true;
     if (!$('#checkoutModal').hidden) closeCheckout();
@@ -2302,8 +2307,8 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     if (!state.cat) state.photo = false;
     if (!hasQuery) state.searchFlow = false;
     if (state.pv) { state.pv = null; product.hidden = true; }
-    idle.hidden = hasQuery;
-    results.hidden = !hasQuery;
+    idle.hidden = inCab || hasQuery;
+    results.hidden = inCab || !hasQuery;
     $('#vinbar').hidden = !state.vin;
     if (!hasQuery) { $('#suggest').hidden = true; $('#activeLine').innerHTML = ''; syncBadges(); return; }
 
@@ -4265,6 +4270,7 @@ var lastView = null;
 function render(opts) {
   opts = opts || {};
   if (acc.hidden) return;
+  lockLanding();                      /* страховка: кабинет открыт — лендинг скрыт, что бы ни делали таймеры */
   var r = route();
   var routeChanged = lastView !== null && lastView !== r.v;
   if (lastView && lastView !== r.v) { ui.addrForm = null; ui.carForm = null; ui.profileEdit = false; ui.draft = null; ui.errors = {}; }
@@ -4578,6 +4584,10 @@ var hdrEl = document.querySelector('.hdr');
 var loginBtn = document.getElementById('loginBtn');
 var mobileTabs = document.getElementById('mobileTabs');
 var LANDING_VIEWS = ['idle', 'results', 'product', 'search', 'qpage', 'cartPage', 'favoritesPage', 'info'];
+/* пока кабинет открыт, ни один раздел лендинга показывать нельзя */
+function lockLanding() {
+  LANDING_VIEWS.forEach(function (id) { var el = document.getElementById(id); if (el) el.hidden = true; });
+}
 var snapshot = null, authOn = false, accountReturnRoute = null;
 try { authOn = JSON.parse(localStorage.getItem(AUTH_KEY) || '{}').in === true; } catch (e) { /* нет сохранения */ }
 
@@ -4623,7 +4633,7 @@ function openAccount(ev, keepRoute) {
     snapshot = { pages: {}, hdr: hdrEl.hidden, tab: cur ? cur.dataset.tab : null, y: window.scrollY };
     LANDING_VIEWS.forEach(function (id) { snapshot.pages[id] = document.getElementById(id).hidden; });
     NR.closeOverlays();
-    LANDING_VIEWS.forEach(function (id) { document.getElementById(id).hidden = true; });
+    lockLanding();
     hdrEl.hidden = false;
     acc.hidden = false;
     document.body.classList.add('account-mode');
@@ -4680,7 +4690,7 @@ window.addEventListener('hashchange', function () {
 document.addEventListener('click', function (e) {
   if (acc.hidden) return;
   var t = e.target instanceof Element ? e.target : e.target.parentElement;
-  if (!t || t.closest('#accountApp, #loginBtn, #toast, #checkoutModal, #lightbox, #authModal, [data-tab="profile"]')) return;
+  if (!t || t.closest('#accountApp, #loginBtn, #msgBtn, #msgDrop, #toast, #checkoutModal, #lightbox, #authModal, [data-tab="profile"]')) return;
 
   /* Выбор категории/подкатегории уже уводит в выдачу — здесь кабинет можно закрыть. */
   if (t.closest('#catPanel .cp-all, #catPanel .cp-lnk')) { closeAccount(false); return; }
