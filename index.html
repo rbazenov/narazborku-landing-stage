@@ -4474,7 +4474,7 @@ acc.addEventListener('submit', function (e) {
       window.NRShopMessages.act(c.id, { action: 'send', body: txt })
         .then(function () { return window.NRShopMessages.pull(); })
         .then(function () { var w = $('#chatW'); if (w) w.scrollTop = w.scrollHeight; })
-        .catch(function (err) { inp.value = txt; toast('Не отправлено: ' + (err && err.message ? err.message : 'магазин недоступен')); });
+        .catch(function (err) { inp.value = txt; if (window.console && console.log) console.log('[чат] сообщение не отправлено:', err && err.message); });
       return;
     }
     c.msgs.push({ f: 'm', t: Date.now(), x: txt }); c.t = Date.now(); save();
@@ -5488,18 +5488,16 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
       if (ready()) { clearInterval(timer); cb(); return; }
       if (tries % 12 === 11 && window.NRShopSync && window.NRShopSync.run)
         window.NRShopSync.run('окно чата ждёт магазин');   /* раз в 3 секунды пробуем связь заново */
-      if (++tries > 240) {
-        clearInterval(timer);
-        if (onFail) { onFail(); return; }
-        clearBody(); add('Магазин недоступен — сообщение не отправится. Попробуйте позже.', 'sys');
-        noteText('Магазин недоступен — сообщение не отправлено. Попробуйте позже.');
-      }
+      if (++tries > 240) { clearInterval(timer); if (onFail) onFail(); }
     }, 250);
   }
   function refresh(silent) {
     if (!ready()) {
       if (!silent) {
-        clearBody(); add('Подключаюсь к магазину…', 'sys'); noteText('Подключаюсь к магазину…');
+        /* пока связь устанавливается, показываем обычное приглашение — без технических надписей */
+        clearBody();
+        add('Напишите продавцу: наличие, совместимость, доставка — ответим здесь и в личном кабинете.', 'sys');
+        noteText(NOTE_OK);
         whenReady(function () { refresh(true); });
       }
       return Promise.resolve();
@@ -5534,18 +5532,16 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
   function send(text) {
     if (!text || st.busy) return;
     if (!ready()) {
-      /* магазин ещё не поднялся: показываем сообщение в переписке и отправляем, как только появится связь */
+      /* магазин ещё не поднялся: сообщение сразу в переписке, отправляем при появлении связи */
       var pend = add(bubbleHTML({ sender: 'customer', body: text, t: Date.now() }), 'mine');
-      noteText('Отправляем, как только появится связь с магазином…');
       whenReady(function () { pend.remove(); send(text); }, function () {
         pend.remove();
-        noteText('Магазин недоступен — сообщение не отправлено. Попробуйте позже.');
         if (!input.value) input.value = text;   /* текст возвращаем в поле, чтобы не потерялся */
       });
       return;
     }
     st.busy = true;
-    add(bubbleHTML({ sender: 'customer', body: text, t: Date.now() }), 'mine');
+    var mine = add(bubbleHTML({ sender: 'customer', body: text, t: Date.now() }), 'mine');
     if (!st.convId) {
       api().create({
         product_id: (st.item && st.item.id) || '',
@@ -5566,9 +5562,14 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
         return refresh(true);
       }).catch(fail);
     }
+    /* Если отправить не удалось — убираем неподтверждённое сообщение из переписки
+       и возвращаем текст в поле ввода. В самом окне никаких технических надписей. */
     function fail(e) {
       st.busy = false;
-      noteText('Не отправлено: ' + (e && e.message ? e.message : 'нет связи с магазином'));
+      if (mine && mine.parentNode) mine.remove();
+      if (!input.value) input.value = text;
+      noteText(NOTE_OK);
+      if (window.console && console.log) console.log('[чат] сообщение не отправлено:', e && e.message);
     }
   }
 
