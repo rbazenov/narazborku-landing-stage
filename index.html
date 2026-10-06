@@ -4907,7 +4907,7 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
 
   function getJSON(url) {
     var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-    var timer = ctl ? setTimeout(function () { ctl.abort(); }, 6000) : null;
+    var timer = ctl ? setTimeout(function () { ctl.abort(); }, 12000) : null;
     return fetch(url, { headers: { 'x-publishable-api-key': SHOP_KEY }, signal: ctl ? ctl.signal : undefined })
       .then(function (res) {
         if (timer) clearTimeout(timer);
@@ -4929,7 +4929,13 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
     return next();
   }
 
-  pickAddress()
+  var ATTEMPTS = 0, RETRY_TIMER = null, RUNNING = false, MAX_TRIES = 6;
+
+  function sync(why) {
+    if (RUNNING) return Promise.resolve();
+    RUNNING = true;
+    if (why) console.log('[магазин] попытка связи: ' + why);
+    return pickAddress()
     .then(function (hit) {
       var regions = hit.regions;
       var region = regions.filter(function (r) { return r.currency_code === 'rub'; })[0] || regions[0];
@@ -4979,12 +4985,37 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
           'позиций из магазина: ' + applied.updated + ', добавлено новых: ' + applied.added);
       console.log('[магазин] синхронизация через ' + res.base + ': обновлено ' + applied.updated +
                   ', добавлено ' + applied.added + ', всего позиций ' + applied.total);
+      RUNNING = false; ATTEMPTS = 0;
     })
     .catch(function (err) {
+      RUNNING = false;
       window.NRShop = { ok: false, error: String(err) };
       say('подборка недели', 'Магазин недоступен — показаны встроенные данные');
       console.log('[магазин] данные не получены, показан демо-каталог:', String(err));
+      scheduleRetry();
     });
+  }
+
+  /* Если связь оборвалась (медленная сеть, магазин перезапускается) — пробуем снова:
+     4 с, 8 с, 16 с, 32 с, 60 с. Раньше попытка была одна, и окно чата навсегда
+     показывало «магазин недоступен». */
+  function scheduleRetry() {
+    if (RETRY_TIMER || ATTEMPTS >= MAX_TRIES) return;
+    var wait = Math.min(60000, 4000 * Math.pow(2, ATTEMPTS));
+    ATTEMPTS++;
+    RETRY_TIMER = setTimeout(function () { RETRY_TIMER = null; sync('автоматически'); }, wait);
+  }
+
+  /* запустить связку заново можно и по требованию — этим пользуется окно чата */
+  window.NRShopSync = {
+    run: function (why) {
+      if (RETRY_TIMER) { clearTimeout(RETRY_TIMER); RETRY_TIMER = null; }
+      return sync(why || 'по запросу');
+    },
+    state: function () { return { ok: !!(window.NRShop && window.NRShop.ok), attempts: ATTEMPTS }; }
+  };
+
+  sync();
 })();
 </script>
 <script id="shopAccount">
@@ -5360,8 +5391,10 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
     if (shop()) { cb(); return; }
     var tries = 0;
     var timer = setInterval(function () {
-      if (shop()) { clearInterval(timer); cb(); }
-      else if (++tries > 80) clearInterval(timer);
+      if (shop()) { clearInterval(timer); cb(); return; }
+      if (tries % 12 === 11 && window.NRShopSync && window.NRShopSync.run)
+        window.NRShopSync.run('кабинет ждёт магазин');
+      else if (++tries > 240) clearInterval(timer);
     }, 250);
   }
 
@@ -5446,9 +5479,29 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
   }
 
   /* ---------- загрузка переписки по этому товару ---------- */
+  /* Ждём, пока витрина получит адрес магазина (обычно меньше секунды).
+     Раньше окно сразу писало «магазин недоступен», если открыть чат слишком быстро. */
+  function whenReady(cb, onFail) {
+    if (ready()) { cb(); return; }
+    var tries = 0;
+    var timer = setInterval(function () {
+      if (ready()) { clearInterval(timer); cb(); return; }
+      if (tries % 12 === 11 && window.NRShopSync && window.NRShopSync.run)
+        window.NRShopSync.run('окно чата ждёт магазин');   /* раз в 3 секунды пробуем связь заново */
+      if (++tries > 240) {
+        clearInterval(timer);
+        if (onFail) { onFail(); return; }
+        clearBody(); add('Магазин недоступен — сообщение не отправится. Попробуйте позже.', 'sys');
+        noteText('Магазин недоступен — сообщение не отправлено. Попробуйте позже.');
+      }
+    }, 250);
+  }
   function refresh(silent) {
     if (!ready()) {
-      if (!silent) { clearBody(); add('Магазин недоступен — сообщение не отправится. Попробуйте позже.', 'sys'); }
+      if (!silent) {
+        clearBody(); add('Подключаюсь к магазину…', 'sys'); noteText('Подключаюсь к магазину…');
+        whenReady(function () { refresh(true); });
+      }
       return Promise.resolve();
     }
     var item = st.item || {};
@@ -5480,7 +5533,17 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
   /* ---------- отправка сообщения ---------- */
   function send(text) {
     if (!text || st.busy) return;
-    if (!ready()) { noteText('Магазин недоступен — сообщение не отправлено. Попробуйте позже.'); return; }
+    if (!ready()) {
+      /* магазин ещё не поднялся: показываем сообщение в переписке и отправляем, как только появится связь */
+      var pend = add(bubbleHTML({ sender: 'customer', body: text, t: Date.now() }), 'mine');
+      noteText('Отправляем, как только появится связь с магазином…');
+      whenReady(function () { pend.remove(); send(text); }, function () {
+        pend.remove();
+        noteText('Магазин недоступен — сообщение не отправлено. Попробуйте позже.');
+        if (!input.value) input.value = text;   /* текст возвращаем в поле, чтобы не потерялся */
+      });
+      return;
+    }
     st.busy = true;
     add(bubbleHTML({ sender: 'customer', body: text, t: Date.now() }), 'mine');
     if (!st.convId) {
