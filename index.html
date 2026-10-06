@@ -4797,6 +4797,8 @@ window.NRAccount = {
     S.convs = server.concat(leftLocal);
     save();
     if (!acc.hidden) render();
+    /* сообщаем шапке: свежие диалоги изменились — счётчик на иконке обновится сразу */
+    try { window.dispatchEvent(new Event('conversations:update')); } catch (e) { }
   },
   /* ---------- покупатель написал продавцу из карточки товара ---------- */
   noteLocalMessage: function (info) {
@@ -5912,6 +5914,7 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
   /* счётчик живёт сам: при старте, после подгрузки сообщений и раз в 10 секунд */
   window.addEventListener('shop:ready', function () { setTimeout(paint, 300); });
   window.addEventListener('account:open', function () { setTimeout(paint, 1200); });
+  window.addEventListener('conversations:update', paint);   /* сразу, без ожидания следующего тика */
   setInterval(paint, 10000);
   var ticks = 0, warm = setInterval(function () { paint(); if (++ticks > 20) clearInterval(warm); }, 1500);
   paint();
