@@ -1128,7 +1128,7 @@ body.account-mode main { max-width: none; padding: 0; }
 #accountApp .dialog h2 { font-size: 18px; margin-bottom: 8px; }
 #accountApp .dialog p { color: var(--text2); font-size: 13.5px; }
 #accountApp .dialog .actions { justify-content: flex-end; }
-#accountApp .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 @media (max-width: 980px) {
 #accountApp .layout { grid-template-columns: 220px minmax(0, 1fr); gap: 16px; }
 #accountApp .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1571,9 +1571,9 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
 .sc-msg.mine .bub-tag { color: var(--warm); opacity: .75; }
 .sc-msg.sys { align-self: center; background: transparent; border: 0; color: var(--text2); font-size: 12px; text-align: center; max-width: 100%; }
 .sc-msg .bub-tag { display: block; font-size: 10.5px; font-weight: 800; opacity: .75; margin-bottom: 2px; }
-.sc-form { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--surface); }
-.sc-form input { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font: inherit; font-size: 13.5px; background: var(--gray); }
-.sc-form button { flex: none; width: 42px; height: 42px; border-radius: 10px; background: var(--dark); color: var(--warm); font-size: 16px; }
+.sc-form { position: relative; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--surface); }
+.sc-form input { display: block; width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 10px; padding: 11px 54px 11px 14px; font: inherit; font-size: 13.5px; background: var(--gray); }
+.sc-form button { position: absolute; right: 19px; top: 50%; transform: translateY(-50%); width: 34px; height: 34px; border-radius: 9px; background: var(--dark); color: var(--warm); font-size: 15px; }
 .sc-note { margin: 0; padding: 8px 12px 10px; font-size: 11px; color: var(--text2); background: var(--surface); border-top: 1px solid var(--border); }
 @media (max-width: 560px) {
   .sc-panel { right: 8px; left: 8px; bottom: 8px; width: auto; height: min(72vh, 520px); }
@@ -5400,8 +5400,7 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
   </header>
   <div class="sc-body" id="scBody" aria-live="polite"></div>
   <form class="sc-form" id="scForm">
-    <label class="sr" for="scInput">Сообщение продавцу</label>
-    <input id="scInput" type="text" autocomplete="off" maxlength="500" placeholder="Напишите сообщение…">
+    <input id="scInput" type="text" autocomplete="off" maxlength="500" placeholder="Напишите сообщение…" aria-label="Сообщение продавцу">
     <button type="submit" aria-label="Отправить сообщение">➤</button>
   </form>
   <p class="sc-note" id="scNote">Ответ продавца придёт в личный кабинет — раздел «Сообщения».</p>
