@@ -5883,11 +5883,22 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !drop.hidden) closePanel(); });
 
   /* открыть диалог в кабинете */
+  /* Открыть диалог в кабинете. Сразу после входа кабинет открывается сам и может
+     один раз сбросить маршрут на «Обзор» — поэтому маршрут диалога удерживаем,
+     пока он не устоится (если покупатель сам ушёл из диалога, не мешаем). */
   function openChat(id) {
     var want = '#cabinet/messages/' + encodeURIComponent(id);
-    if (location.hash === want) {
-      if (window.NRAccount && !window.NRAccount.cabinetOpen()) window.dispatchEvent(new Event('account:open'));
-    } else location.hash = want;
+    var tries = 0;
+    (function set() {
+      if (location.hash === want) {
+        if (window.NRAccount && !window.NRAccount.cabinetOpen()) window.dispatchEvent(new Event('account:open'));
+      } else location.hash = want;
+      if (++tries >= 5) return;
+      setTimeout(function () {
+        if (location.hash === want) return;   /* уже открыт — не вмешиваемся */
+        set();
+      }, 600);
+    })();
   }
   function signedIn() {
     var A = window.NRAccount;
@@ -5908,12 +5919,17 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
     openChat(id);
   });
   var wantAfterLogin = '';
-  window.addEventListener('account:open', function () {
+  function afterLogin() {
     if (!wantAfterLogin) return;
+    if (!/^#cabinet(\/|$)/.test(location.hash)) return;   /* кабинет ещё не открылся */
     var id = wantAfterLogin;
     wantAfterLogin = '';
-    setTimeout(function () { openChat(id); }, 1200);
-  });
+    setTimeout(function () { openChat(id); }, 300);
+  }
+  window.addEventListener('account:open', afterLogin);
+  /* вход через магазин открывает кабинет сам и не всегда присылает событие —
+     поэтому следим и за маршрутом кабинета */
+  window.addEventListener('hashchange', afterLogin);
   var all = document.getElementById('msgDropAll');
   if (all) all.addEventListener('click', function (e) {
     e.stopPropagation(); closePanel();
