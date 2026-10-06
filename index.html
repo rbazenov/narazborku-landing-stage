@@ -1606,7 +1606,31 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
 .convm-star.on { background: #FFF6E2; border-color: var(--amber); color: var(--dark); }
 .convm-actions { display: flex; gap: 8px; justify-content: flex-end; }
 </style>
-</head>
+<style id="hdrMsgStyles">
+/* ---------- Иконка «Сообщения» в шапке (компьютер и планшет) ---------- */
+.msgdrop { position: absolute; top: calc(100% - 6px); right: var(--pad); z-index: 130; width: min(380px, calc(100vw - 24px));
+           max-height: min(72vh, 540px); display: flex; flex-direction: column; background: var(--surface);
+           border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 22px 54px rgba(16,18,24,.24); overflow: hidden; }
+.msgdrop[hidden] { display: none; }
+.msgdrop-h { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--gray); }
+.msgdrop-h b { flex: 1; font-size: 13.5px; font-weight: 800; }
+.msgdrop-all { font-size: 12px; font-weight: 700; color: var(--gold-txt-d); }
+.msgdrop-all:hover { text-decoration: underline; }
+.msgdrop-list { overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.msgdrop-i { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border-radius: 10px; text-align: left; }
+.msgdrop-i:hover { background: var(--gray); }
+.msgdrop-pic { flex: none; width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; font-size: 18px;
+               background: var(--surface); border: 1px solid var(--border); }
+.msgdrop-txt { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.msgdrop-t { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgdrop-p { font-size: 12px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgdrop-side { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.msgdrop-time { font-size: 11px; color: var(--text2); }
+.msgdrop-n { font-size: 10px; font-weight: 800; color: var(--dark); background: var(--amber); border-radius: 999px; padding: 1px 6px; }
+.msgdrop-empty { padding: 20px 14px; font-size: 13px; color: var(--text2); text-align: center; }
+.msgdrop-foot { padding: 8px 14px 10px; font-size: 11px; color: var(--text2); border-top: 1px solid var(--border); background: var(--surface); }
+@media (max-width: 599px) { .msgdrop { display: none !important; } }
+</style></head>
 <body>
 
 <header class="hdr">
@@ -1645,9 +1669,19 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
       <button class="act-btn" id="favBtn" aria-label="Избранное">
         <span class="ic">❤️<span class="b" id="favB" hidden>0</span></span><span class="t">Избранное</span>
       </button>
+      <button class="act-btn" id="msgBtn" type="button" aria-label="Сообщения" aria-haspopup="dialog" aria-expanded="false" aria-controls="msgDrop">
+        <span class="ic">&#128172;<span class="b" id="msgB" hidden>0</span></span><span class="t">Сообщения</span>
+      </button>
       <button class="act-btn" id="cartBtn" aria-label="Корзина">
         <span class="ic">🛒<span class="b" id="cartB" hidden>0</span></span><span class="t">Корзина</span>
       </button>
+    </div>
+
+    <!-- Сообщения: список новых сообщений (компьютер и планшет) -->
+    <div class="msgdrop" id="msgDrop" role="dialog" aria-label="Новые сообщения" hidden>
+      <div class="msgdrop-h"><b>Новые сообщения</b><button class="msgdrop-all" type="button" id="msgDropAll">Все сообщения</button></div>
+      <div class="msgdrop-list" id="msgList"></div>
+      <div class="msgdrop-foot">Прочитанные сообщения здесь не показываются — их видно в кабинете, в разделе «Сообщения».</div>
     </div>
 
     <!-- Мобильные разделы: раскрывающийся список из хедера -->
@@ -5456,7 +5490,7 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
       id: c.id, server: true, pid: c.product_id, icon: c.product_icon || '💬', title: c.title,
       who: 'Наразборку · продавец', ref: c.order_ref || 'Чат с продавцом',
       t: c.last_message_ts || (c.last_message_at ? Date.parse(c.last_message_at) : 0) || Date.now(),
-      unread: Number(c.unread_customer || 0) > 0,
+      unread: Number(c.unread_customer || 0) > 0, unreadCount: Number(c.unread_customer || 0),
       important: !!c.important, pinned: !!c.pinned, blocked: !!c.blocked,
       msgs: (c.messages || []).map(function (m) {
         return { f: m.sender === 'seller' ? 's' : 'm', t: Date.parse(m.t) || Date.now(), x: m.body, kind: m.kind, rating: m.rating };
@@ -5775,5 +5809,112 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
   };
 })();
 </script>
-</body>
+<script id="hdrMessages">
+/* ================= ИКОНКА «СООБЩЕНИЯ» В ШАПКЕ =================
+   Видна на компьютере и планшете (на телефоне шапка другая).
+   Показывает только НОВЫЕ (непрочитанные) сообщения: в списке — диалоги,
+   где есть непрочитанное; счётчик на иконке исчезает, когда всё прочитано.
+   Клик по иконке — список вниз, клик по строке — диалог в личном кабинете. */
+(function () {
+  var btn = document.getElementById('msgBtn'), badge = document.getElementById('msgB');
+  var drop = document.getElementById('msgDrop'), list = document.getElementById('msgList');
+  if (!btn || !drop || !list) return;
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function convs() { var A = window.NRAccount; return (A && A.conversations) ? (A.conversations() || []) : []; }
+  /* только новые: диалоги, где покупателю ещё не всё прочитано */
+  function fresh() { return convs().filter(function (c) { return c.unread; }); }
+  function counter() { return fresh().reduce(function (s, c) { return s + Math.max(1, Number(c.unreadCount || 0)); }, 0); }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function time(t) {
+    var d = new Date(t || 0), now = new Date();
+    if (isNaN(d.getTime())) return '';
+    if (d.toDateString() === now.toDateString()) return pad(d.getHours()) + ':' + pad(d.getMinutes());
+    return pad(d.getDate()) + '.' + pad(d.getMonth() + 1);
+  }
+  function sortFresh(a, b) { return ((b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)) || ((b.t || 0) - (a.t || 0)); }
+
+  function row(c) {
+    var msgs = c.msgs || [], last = msgs[msgs.length - 1] || {};
+    var who = last.f === 's' ? 'Продавец: ' : last.f === 'm' ? 'Вы: ' : '';
+    var n = Math.max(1, Number(c.unreadCount || 0));
+    return '<button class="msgdrop-i" type="button" data-conv="' + esc(c.id) + '" aria-label="Открыть диалог: ' + esc(c.title) + '">' +
+      '<span class="msgdrop-pic" aria-hidden="true">' + (c.icon || '\u{1F4AC}') + '</span>' +
+      '<span class="msgdrop-txt"><span class="msgdrop-t">' + esc(c.title || 'Диалог') + '</span>' +
+      '<span class="msgdrop-p">' + esc(who + String(last.x == null ? 'Новое сообщение' : last.x)) + '</span></span>' +
+      '<span class="msgdrop-side"><span class="msgdrop-time">' + time(c.t) + '</span>' +
+      '<span class="msgdrop-n">' + (n > 1 ? n + ' новых' : 'новое') + '</span></span></button>';
+  }
+
+  function paint() {
+    var items = fresh().sort(sortFresh), n = counter();
+    badge.hidden = !n;
+    badge.textContent = n > 99 ? '99+' : String(n);
+    btn.setAttribute('aria-label', n ? ('Сообщения: новых ' + n) : 'Сообщения');
+    if (drop.hidden) return;
+    list.innerHTML = items.length ? items.map(row).join('')
+      : '<p class="msgdrop-empty">Новых сообщений нет</p>';
+  }
+  function refresh() {
+    if (window.NRShopMessages && window.NRShopMessages.pull) window.NRShopMessages.pull().catch(function () { });
+    paint();
+  }
+  function openPanel() { drop.hidden = false; btn.setAttribute('aria-expanded', 'true'); paint(); }
+  function closePanel() { drop.hidden = true; btn.setAttribute('aria-expanded', 'false'); }
+
+  btn.addEventListener('click', function (e) {
+    e.preventDefault(); e.stopPropagation();
+    if (drop.hidden) { openPanel(); refresh(); } else closePanel();
+  });
+  drop.addEventListener('click', function (e) { e.stopPropagation(); });
+  document.addEventListener('click', function () { if (!drop.hidden) closePanel(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !drop.hidden) closePanel(); });
+
+  /* открыть диалог в кабинете */
+  function openChat(id) {
+    var want = '#cabinet/messages/' + encodeURIComponent(id);
+    if (location.hash === want) {
+      if (window.NRAccount && !window.NRAccount.cabinetOpen()) window.dispatchEvent(new Event('account:open'));
+    } else location.hash = want;
+  }
+  function signedIn() {
+    var A = window.NRAccount;
+    return !!(A && A.loggedIn && A.loggedIn());
+  }
+  /* клик по строке — открываем сам диалог в кабинете */
+  list.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('[data-conv]') : null;
+    if (!b) return;
+    var id = b.getAttribute('data-conv');
+    closePanel();
+    if (!signedIn()) {                      /* сначала вход в кабинет, после входа откроем этот диалог */
+      wantAfterLogin = id;
+      var login = document.getElementById('loginBtn');
+      if (login) login.click();
+      return;
+    }
+    openChat(id);
+  });
+  var wantAfterLogin = '';
+  window.addEventListener('account:open', function () {
+    if (!wantAfterLogin) return;
+    var id = wantAfterLogin;
+    wantAfterLogin = '';
+    setTimeout(function () { openChat(id); }, 1200);
+  });
+  var all = document.getElementById('msgDropAll');
+  if (all) all.addEventListener('click', function (e) {
+    e.stopPropagation(); closePanel();
+    if (window.NRAccount && window.NRAccount.openCabinet) window.NRAccount.openCabinet('messages');
+    else location.hash = '#cabinet/messages';
+  });
+
+  /* счётчик живёт сам: при старте, после подгрузки сообщений и раз в 10 секунд */
+  window.addEventListener('shop:ready', function () { setTimeout(paint, 300); });
+  window.addEventListener('account:open', function () { setTimeout(paint, 1200); });
+  setInterval(paint, 10000);
+  var ticks = 0, warm = setInterval(function () { paint(); if (++ticks > 20) clearInterval(warm); }, 1500);
+  paint();
+})();
+</script></body>
 </html>
