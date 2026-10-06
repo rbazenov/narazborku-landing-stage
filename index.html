@@ -4822,6 +4822,15 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
     });
     return { lines: out, missing: missing };
   }
+  /* понятные причины отказа магазина вместо технических сообщений */
+  function friendlyError(err) {
+    var m = (err && err.message) ? String(err.message) : 'магазин недоступен';
+    if (/inventory|stock|остат/i.test(m)) return 'товар закончился на складе — уменьшите количество или выберите аналог';
+    if (/shipping|delivery|zone/i.test(m)) return 'для этого адреса нет доступной доставки — проверьте город и адрес';
+    if (/region|currency/i.test(m)) return 'магазин не обслуживает этот регион';
+    if (/not authenticated|unauthor/i.test(m)) return 'сессия истекла — войдите заново';
+    return m;
+  }
   function address(d) {
     var parts = String(d.name || '').trim().split(/\s+/);
     return {
@@ -4896,7 +4905,7 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
         });
       })
       .catch(function (err) {
-        hint('Заказ не оформлен: ' + (err && err.message ? err.message : 'магазин недоступен'));
+        hint('Заказ не оформлен: ' + friendlyError(err));
         toast('Не удалось оформить заказ — попробуйте ещё раз');
         if (err && err.status === 401) { state.jwt = ''; save(); askLogin(); }
       })
