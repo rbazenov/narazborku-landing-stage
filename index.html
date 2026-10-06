@@ -56,7 +56,7 @@ input, select { font: inherit; }
 :focus-visible { outline: 2px solid var(--gold-txt); outline-offset: 2px; }
 mark { background: transparent; color: inherit; border-radius: 0; padding: 0; }
 [hidden] { display: none !important; }
-/* STOCK-GUARD: поп-ап о наличии товара (показывается при клике «Перейти к оформлению») */
+/* STOCK-GUARD: наличие товара — поп-ап и прозрачное сообщение на карточке */
 .warn-overlay { position: fixed; inset: 0; z-index: 640; display: flex; align-items: center; justify-content: center; padding: 18px; background: rgba(14,14,16,.58); }
 .warn-dialog { position: relative; width: min(480px, 100%); max-height: min(88vh, 720px); overflow: auto; padding: 24px; border-radius: 16px; background: var(--surface); box-shadow: 0 20px 60px rgba(0,0,0,.3); }
 .warn-close { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; border-radius: 10px; background: var(--gray); font-size: 20px; }
@@ -71,6 +71,10 @@ mark { background: transparent; color: inherit; border-radius: 0; padding: 0; }
 .warn-btn-ghost { flex: 0 0 auto; min-height: 46px; padding: 0 18px; border-radius: 11px; background: var(--gray); color: var(--dark); font-size: 14px; font-weight: 700; }
 .cart-item-out .cart-thumb, .cart-item-out .cart-item-unit { opacity: .55; }
 .cart-item-out .cart-line-total { color: var(--text2); }
+.p-card.is-out .p-img { cursor: pointer; }
+.p-out-veil { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 12px; background: rgba(20,22,26,.66); color: #fff; text-align: center; font-size: 14.5px; font-weight: 800; line-height: 1.25; opacity: 0; visibility: hidden; transition: opacity .18s var(--ease); }
+.p-out-veil.show { opacity: 1; visibility: visible; }
+.p-out-veil small { font-size: 11.5px; font-weight: 600; opacity: .85; }
 
 /* ---------- Шапка: лого + поиск + действия (всё липкое) ---------- */
 .hdr { position: sticky; top: 0; z-index: 100; background: var(--surface); box-shadow: 0 1px 0 var(--border), 0 4px 16px rgba(20,24,40,.06); padding-top: env(safe-area-inset-top,0px); }
@@ -2292,8 +2296,8 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     // Решим продавать со скидкой: раскомментируйте строку ниже (и парную в карточке товара, pp-priceline).
     // const oldHTML = it.old ? `<s>${money(it.old)}</s><span class="disc">${disc}</span>` : '';
     const oldHTML = '';
-    return `<article class="p-card${exactHighlight && state.exact === it ? ' p-exact' : ''}" data-id="${it.id}">
-      <div class="p-img">${it.icon}${it.rate >= 4.8 ? '<span class="p-hit">Хит</span>' : ''}
+    return `<article class="p-card${exactHighlight && state.exact === it ? ' p-exact' : ''}${itemHidden(it) ? ' is-out' : ''}" data-id="${it.id}">
+      <div class="p-img">${it.icon}${it.rate >= 4.8 ? '<span class="p-hit">Хит</span>' : ''}${itemHidden(it) ? '<span class="p-out-veil" aria-hidden="true">Товар закончился<small>Нет в наличии</small></span>' : ''}
         ${gal ? `<button class="p-gal-arr prev" data-gal="-1" aria-label="Предыдущее фото товара"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M8.293 3.293a1 1 0 1 1 1.414 1.414L6.414 8l3.293 3.293a1 1 0 1 1-1.414 1.414l-4-4a1 1 0 0 1 0-1.414z" clip-rule="evenodd"/></svg></button><button class="p-gal-arr next" data-gal="1" aria-label="Следующее фото товара"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M6.293 3.293a1 1 0 0 1 1.414 0l4 4a1 1 0 0 1 0 1.414l-4 4a1 1 0 1 1-1.414-1.414L9.586 8 6.293 4.707a1 1 0 0 1 0-1.414" clip-rule="evenodd"/></svg></button>` : ''}</div>
       <div class="p-body">
         <div class="p-name">${hl(it.title, q)}</div>
@@ -2306,10 +2310,10 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
         </div>
         <div class="p-offer">
           <div class="p-price"><b>${money(it.price)}</b>${oldHTML}</div>
-          <div class="p-stock${it.stock ? '' : ' out'}">${it.stock ? '✔ В наличии (' + it.stock + ' шт.)' : '✖ Под заказ 3–5 дней'}</div>
+          <div class="p-stock${it.stock ? '' : ' out'}">${itemHidden(it) ? '✖ Нет в наличии' : (it.stock ? '✔ В наличии (' + it.stock + ' шт.)' : '✖ Под заказ 3–5 дней')}</div>
         </div>
         <div class="p-actions">
-          <div class="p-cart-control" data-p-cart-control>${productCardCartHTML(it, qtyInCart)}</div>
+          <div class="p-cart-control" data-p-cart-control>${itemHidden(it) ? '<button type="button" class="p-cart" disabled aria-label="Нет в наличии">✖ Нет в наличии</button>' : productCardCartHTML(it, qtyInCart)}</div>
           <button class="p-fav" aria-label="В избранное" aria-pressed="${inFav}">${inFav ? '❤️' : '🤍'}</button>
         </div>
         <button class="p-sell" type="button" data-sell data-id="${it.id}" aria-label="Написать продавцу: ${esc(it.title)}">✍️ Написать продавцу</button>
@@ -2369,7 +2373,7 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     $('#qClear').hidden = !state.q;
   }
   function renderFavorites() {
-    const list = ITEMS.filter(it => fav.has(it.id) && itemShown(it));
+    const list = ITEMS.filter(it => fav.has(it.id));
     $('#favoritesCount').textContent = list.length + ' ' + plural(list.length, ['товар', 'товара', 'товаров']);
     favoritesGrid.innerHTML = list.map(it => cardHTML(it, '', true, false)).join('');
     favoritesGrid.hidden = !list.length;
@@ -2417,7 +2421,9 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
       if (!card) return;
       const item = ITEMS.find(it => it.id === card.dataset.id);
       if (!item) return;
-      control.innerHTML = productCardCartHTML(item, cart.get(item.id) || 0);
+      control.innerHTML = itemHidden(item)
+        ? '<button type="button" class="p-cart" disabled aria-label="Нет в наличии">✖ Нет в наличии</button>'
+        : productCardCartHTML(item, cart.get(item.id) || 0);
     });
     const ppCartControl = $('#ppCartControl');
     if (ppCartControl && state.pv) ppCartControl.innerHTML = productCartControlHTML(cart.get(state.pv.id) || 0);
@@ -2439,8 +2445,7 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     $('#checkoutTotal').textContent = 'Итого без доставки: ' + money(subtotal);
     $('#cartItems').innerHTML = entries.map(({ it, qty }) => {
       const zeroed = qty === 0;                       // товар закончился на складе — количество обнулено
-      const hint = zeroed ? ((it.live && !(it.stock > 0)) ? '✖ Нет в наличии — количество обнулено, товар можно только удалить'
-                                                           : 'Количество обнулено — товар можно только удалить')
+      const hint = zeroed ? '✖ Товар закончился — количество обнулено, позицию можно только удалить'
                           : stockText(it);
       return `
       <article class="cart-item${zeroed ? ' cart-item-out' : ''}" data-cart-id="${it.id}">
@@ -2475,7 +2480,7 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   function addToCart(id) {
     const item = ITEMS.find(it => it.id === id);
     if (!item) return false;
-    if (item.live && !(item.stock > 0)) { toast('Товар закончился на складе'); return false; }
+    if (item.live && !(item.stock > 0)) { toast('Товар закончился'); return false; }
     const current = cart.get(id) || 0;
     if (current >= 99) { toast('Максимум 99 шт. одного товара'); return false; }
     cart.set(id, current + 1);
@@ -2545,13 +2550,15 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     $('#checkoutModal').hidden = true;
     document.body.style.overflow = '';
   }
-  /* ================= НАЛИЧИЕ НА СКЛАДЕ И ПОНЯТНЫЙ ПОП-АП (STOCK-GUARD) =================
-     Правило витрины: товар, связанный с магазином, при нулевом остатке с витрины
-     скрывается и возвращается, когда остаток появится снова.
+  /* ================= НАЛИЧИЕ НА СКЛАДЕ И ПОП-АП (STOCK-GUARD) =================
+     Витрина: товар, связанный с магазином, при нулевом остатке скрывается и
+     возвращается, когда остаток появится снова. Исключение — «Избранное»: там
+     карточка остаётся, по клику поверх картинки всплывает сообщение
+     «Товар закончился», товар можно убрать из избранного.
      Перед оформлением заказа остатки перечитываются из магазина: если товар успел
-     закончиться — поп-ап, количество в корзине обнуляется (товар можно только удалить),
-     стоимость пересчитывается; если на складе меньше выбранного — предлагаем уменьшить
-     количество до остатка. Любой поп-ап закрывается крестиком. */
+     закончиться — поп-ап, количество в корзине обнуляется (позицию можно только
+     удалить), стоимость пересчитывается; если на складе меньше выбранного —
+     предлагаем уменьшить количество до остатка. Любой поп-ап закрывается крестиком. */
   const warnModal = $('#warnModal');
   let warnOnClose = null, warnHandlers = {};
   function openWarn(opts) {
@@ -2598,10 +2605,9 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   function showOutWarn(rows) {
     const one = rows.length === 1;
     openWarn({
-      title: one ? 'Товар закончился на складе' : 'Товары закончились на складе',
-      body: '<p>Пока товар лежал в корзине, он закончился на складе:</p>' +
-        warnList(rows, () => 'нет в наличии') +
-        '<p>Количество в корзине обнулится — такую позицию можно только удалить. Стоимость корзины пересчитается.</p>',
+      title: one ? 'Товар закончился' : 'Товары закончились',
+      body: warnList(rows, () => 'нет в наличии') +
+        '<p>Количество в корзине обнулится — позицию можно только удалить, стоимость корзины пересчитается.</p>',
       actions: [{ act: 'ok', label: 'Понятно', primary: true }],
       onClose: function () {                       /* по крестику: количество обнуляется, итог пересчитывается */
         rows.forEach(r => { if ((cart.get(r.it.id) || 0) !== 0) cart.set(r.it.id, 0); });
@@ -2612,10 +2618,9 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   function showOverWarn(rows) {
     const one = rows.length === 1;
     openWarn({
-      title: one ? 'На складе меньше, чем в корзине' : 'Часть товаров есть на складе в меньшем количестве',
-      body: '<p>На складе осталось меньше, чем вы выбрали:</p>' +
-        warnList(rows, r => 'на складе ' + r.stock + ' шт., в корзине ' + r.qty + ' шт.') +
-        '<p>Уменьшить количество до остатка — и заказ можно оформить.</p>',
+      title: 'Не хватает на складе',
+      body: warnList(rows, r => 'на складе ' + r.stock + ' шт., в корзине ' + r.qty + ' шт.') +
+        '<p>' + (one ? 'Уменьшите количество — и заказ можно оформить.' : 'Уменьшите количество — и заказ можно оформить.') + '</p>',
       actions: [{ act: 'reduce', label: one ? 'Уменьшить до ' + rows[0].stock + ' шт.' : 'Уменьшить до остатка', primary: true }],
       handlers: {
         reduce: function () {
@@ -3762,6 +3767,11 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
       else { fav.add(id); fbtn.textContent = '❤️'; fbtn.setAttribute('aria-pressed', 'true'); toast('❤️ В избранном'); }
       syncBadges(); bump($('#favB'));
       if (!favoritesPage.hidden) renderFavorites();
+    } else if (itemHidden(it) && !e.target.closest('.p-sell')) {
+      /* товар закончился (например, лежит в избранном): по клику поверх картинки
+         всплывает прозрачное сообщение; каждый клик показывает его заново */
+      const veil = card.querySelector('.p-out-veil');
+      if (veil) { veil.classList.add('show'); clearTimeout(veil._t); veil._t = setTimeout(() => veil.classList.remove('show'), 2600); }
     } else {
       openProduct(it);
     }
