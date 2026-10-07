@@ -1796,6 +1796,12 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
 
   <!-- Результаты (там же, без переходов) -->
   <section id="results" hidden>
+    <!-- LK-SEARCH: возврат в раздел кабинета, из которого начали поиск -->
+    <div class="vinbar" id="cabBack" hidden>
+      <span class="e" aria-hidden="true">🧾</span>
+      <span><b>Поиск из кабинета</b><span id="cabBackTx">Вернуться в свой раздел</span></span>
+      <button type="button" id="cabBackBtn">← В кабинет</button>
+    </div>
     <div class="vinbar" id="vinbar" hidden>
       <span class="e">🚗</span>
       <span><b id="vinTitle"></b><span id="vinSub"></span></span>
@@ -2380,6 +2386,14 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
      разделы лендинга остаются скрытыми, даже когда витрина синхронизируется в фоне
      и зовёт render() (иначе карточки товаров возвращаются поверх кабинета). */
   function cabinetOpen() { var app = document.getElementById('accountApp'); return !!(app && !app.hidden); }
+  /* LK-SEARCH: на выдаче показываем возврат в раздел кабинета, из которого начали поиск */
+  function syncCabBack() {
+    var bar = $('#cabBack'); if (!bar) return;
+    var acc = window.NRAccount;
+    var label = acc && acc.hasReturnRoute && acc.hasReturnRoute() ? acc.returnLabel() : '';
+    bar.hidden = !label;
+    if (label) $('#cabBackTx').textContent = 'Вернуться в раздел «' + label + '»';
+  }
   function render() {
     const hasQuery = !!(state.q || state.cat || state.vin);
     const inCab = cabinetOpen();
@@ -2396,6 +2410,7 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     idle.hidden = inCab || hasQuery;
     results.hidden = inCab || !hasQuery;
     $('#vinbar').hidden = !state.vin;
+    syncCabBack();
     if (!hasQuery) { $('#suggest').hidden = true; $('#activeLine').innerHTML = ''; syncBadges(); return; }
 
     const list = sortList(baseList());
@@ -2877,7 +2892,9 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     window.dispatchEvent(new CustomEvent('storefront:search', { detail: { q: isVin ? q.slice(4) : q, vin: isVin } }));
   }
   function doSearch(q, flow) {
-    if ((!$('#search').hidden || !q) && window.NRAccount && window.NRAccount.clearCabinetReturn) window.NRAccount.clearCabinetReturn();
+    /* LK-SEARCH: поиск из кабинета — кабинет уходит с экрана, но раздел запоминается:
+       на выдаче остаётся кнопка «← В кабинет», она вернёт в тот же раздел. */
+    if (window.NRAccount && window.NRAccount.leaveForSearch) window.NRAccount.leaveForSearch();
     state.searchFlow = !!flow; state.photo = false;
     state.page = 1; state.vin = ''; state.exact = null;
     const pre = q ? search(q) : null;
@@ -3715,6 +3732,8 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     window.scrollTo({ top: 0 });
   }
   function openSearch(preQ) {
+    /* LK-SEARCH: страница поиска открывается поверх кабинета (пустой запрос) */
+    if (window.NRAccount && window.NRAccount.leaveForSearch) window.NRAccount.leaveForSearch();
     cartPage.hidden = true; cartReturnSnapshot = null;
     closeMenu();
     $('#idle').hidden = true; results.hidden = true; product.hidden = true; favoritesPage.hidden = true; $('#info').hidden = true; $('#qpage').hidden = true;
@@ -3841,6 +3860,11 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     buildSuggest();
   });
   $('#sCancel').addEventListener('click', () => {
+    if (window.NRAccount && window.NRAccount.returnToCabinetFromSearch && window.NRAccount.returnToCabinetFromSearch()) return;
+    goHome();
+  });
+  /* LK-SEARCH: кнопка возврата в кабинет на странице выдачи */
+  $('#cabBackBtn').addEventListener('click', () => {
     if (window.NRAccount && window.NRAccount.returnToCabinetFromSearch && window.NRAccount.returnToCabinetFromSearch()) return;
     goHome();
   });
@@ -5120,6 +5144,8 @@ function lockLanding() {
   LANDING_VIEWS.forEach(function (id) { var el = document.getElementById(id); if (el) el.hidden = true; });
 }
 var snapshot = null, authOn = false, accountReturnRoute = null;
+/* LK-SEARCH: узкий экран — поле поиска ведёт на страницу поиска (как на телефоне) */
+function isNarrowScreen() { return !!(window.matchMedia && window.matchMedia('(max-width: 599px)').matches); }
 try { authOn = JSON.parse(localStorage.getItem(AUTH_KEY) || '{}').in === true; } catch (e) { /* нет сохранения */ }
 
 function setAuth(on) {
@@ -5210,7 +5236,12 @@ window.addEventListener('assistant:run-search', function (ev) {
   else NR.search(query);
 });
 
-window.addEventListener('account:open', function (ev) { if (!acc.hidden) { go(''); return; } openAccount(ev); });
+window.addEventListener('account:open', function (ev) {
+  if (!acc.hidden) { go(''); return; }
+  /* LK-SEARCH: если поиск начинался из кабинета, возвращаемся в тот же раздел */
+  if (accountReturnRoute && window.NRAccount.returnToCabinetFromSearch()) return;
+  openAccount(ev);
+});
 window.addEventListener('hashchange', function () {
   var inCab = /^#cabinet(\/|$)/.test(location.hash);
   if (inCab && !acc.hidden) render();
@@ -5227,9 +5258,13 @@ document.addEventListener('click', function (e) {
   if (t.closest('#catPanel .cp-all, #catPanel .cp-lnk')) { closeAccount(false); return; }
   /* Каталог — выдвижная панель над ЛК. Закрытие панели не должно закрывать кабинет. */
   if (t.closest('#catBtn, #mobileTabs [data-tab="catalog"], #catPanel')) return;
-  /* Поиск из ЛК можно отменить и вернуться в тот же раздел кабинета. */
-  if (t.closest('#q')) {
+  /* LK-SEARCH: поиск из ЛК — запоминаем раздел, из которого начали поиск.
+     На пк и планшете кабинет не закрываем: подсказки раскрываются поверх раздела,
+     поиск уводит на выдачу, откуда вернёт кнопка «← В кабинет».
+     На телефоне поле ведёт на страницу поиска — её «Отмена» вернёт в тот же раздел. */
+  if (t.closest('#q, #qClear, #sbForm')) {
     accountReturnRoute = location.hash || '#cabinet';
+    if (!isNarrowScreen()) return;      /* пк и планшет: остаёмся в кабинете */
     closeAccount(false);
     return;
   }
@@ -5254,6 +5289,22 @@ window.NRAccount = {
     return { name: S.profile.name || '', phone: S.profile.phone || '', address: a ? addrLine(a) : '' };
   },
   clearCabinetReturn: function () { accountReturnRoute = null; },
+  /* LK-SEARCH: раздел кабинета, из которого начали поиск */
+  hasReturnRoute: function () { return !!accountReturnRoute; },
+  returnLabel: function () {
+    var v = String(accountReturnRoute || '').replace(/^#cabinet\/?/, '').split('/')[0] || 'overview';
+    var t = { overview: 'Главная', orders: 'Мои заказы', garage: 'Гараж', searches: 'Мои поиски',
+      messages: 'Сообщения', favorites: 'Избранное', addresses: 'Адреса доставки', profile: 'Профиль' };
+    return t[v] || 'Главная';
+  },
+  /* Поиск из кабинета: уводим кабинет с экрана, но маршрут возврата сохраняем
+     (любой способ начать поиск из ЛК — поле, «Найти», подсказка) */
+  leaveForSearch: function () {
+    if (acc.hidden) return false;
+    accountReturnRoute = location.hash || '#cabinet';   /* раздел, из которого ушли искать */
+    closeAccount(false);
+    return true;
+  },
   returnToCabinetFromSearch: function () {
     if (!accountReturnRoute) return false;
     var target = accountReturnRoute;
