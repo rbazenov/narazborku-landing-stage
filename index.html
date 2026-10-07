@@ -73,11 +73,6 @@ mark { background: transparent; color: inherit; border-radius: 0; padding: 0; }
 .empty-retry[hidden] { display: none; }
 /* INFINITE-SCROLL: кнопка «Показать ещё» больше не нужна — товары подгружаются при прокрутке */
 .more-btn { display: none !important; }
-.more-loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 22px 0 6px; color: var(--text2); font-size: 14px; font-weight: 600; }
-.more-loading[hidden] { display: none; }
-.more-loading::before { content: ''; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--amber); border-radius: 50%; animation: mspin .8s linear infinite; }
-@keyframes mspin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .more-loading::before { animation: none; } }
 .p-rating-meta.p-cond { color: var(--text2); font-size: 12px; }
 /* STOCK-GUARD: наличие товара — поп-ап и прозрачное сообщение на карточке */
 .warn-overlay { position: fixed; inset: 0; z-index: 640; display: flex; align-items: center; justify-content: center; padding: 18px; background: rgba(14,14,16,.58); }
@@ -1840,7 +1835,6 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
       <button type="button" class="empty-retry" id="emptyRetry" hidden>Попробовать снова</button>
       <div class="pop-chips" id="emptyChips" style="justify-content:center"></div>
     </div>
-    <div class="more-loading" id="moreLoading" hidden>Загружаем ещё товары…</div>
     <div id="moreSentinel" aria-hidden="true"></div>
     <button class="more-btn" id="moreBtn" hidden>Показать ещё <span aria-hidden="true">▾</span></button>
   </section>
@@ -3554,7 +3548,7 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   /* INFINITE-SCROLL: товары подгружаются, когда покупатель доходит до конца списка.
      Метка стоит внизу выдачи; как только она попадает в поле зрения — показываем
      следующую порцию. Так работает и на компьютере, и на телефоне, и в каталоге. */
-  const moreSentinel = $('#moreSentinel'), moreLoading = $('#moreLoading');
+  const moreSentinel = $('#moreSentinel');
   let moreBusy = false, moreTimer = 0;
 
   function moreCounts() {
@@ -3572,14 +3566,13 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     const { shown, totalAll, pending } = moreCounts();
 
     /* товаров больше нет: ничего не грузим и не дёргаем витрину */
-    if (shown >= totalAll && !pending) { moreLoading.hidden = true; return; }
+    if (shown >= totalAll && !pending) return;
 
     /* метка ещё далеко от экрана — ждём прокрутки */
     const box = moreSentinel.getBoundingClientRect();
-    if (box.top > (window.innerHeight || 800) + 500) { moreLoading.hidden = true; return; }
+    if (box.top > (window.innerHeight || 800) + 500) return;
 
     moreBusy = true;
-    moreLoading.hidden = false;
     state.page++;                                  /* следующая порция товаров */
     render();
     moreBusy = false;
