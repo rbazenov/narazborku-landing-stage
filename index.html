@@ -5611,8 +5611,8 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
    подгрузка: сколько карточек нужно для текущей страницы каталога, столько и
    запрашиваем; весь каталог разом страница не тянет. */
 (function () {
-  var BATCH = 24, MAX_LOAD = 600;
-  var state = { key: '', total: 0, loaded: 0, busy: false, need: 0, done: false };
+  var BATCH = 24, MAX_LOAD = 600, TRIES = 2;
+  var state = { key: '', total: 0, loaded: 0, busy: false, need: 0, done: false, tries: 0, waitShop: false };
 
   function shop() { var s = window.NRShop; return (s && s.ok && s.base && s.key) ? s : null; }
   function filters() { var S = window.NRStore; return (S && S.filters) ? S.filters() : null; }
@@ -5629,17 +5629,27 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
     var f = filters();
     if (!f) return;
     var key = keyOf(f);
-    if (key !== state.key) {                      /* условия подбора сменились — начинаем заново */
-      state.key = key; state.total = 0; state.loaded = 0; state.need = 0; state.done = false;
+    var fresh = key !== state.key;
+    if (fresh) {                                  /* условия подбора сменились — начинаем заново */
+      state.key = key; state.total = 0; state.loaded = 0; state.need = 0; state.done = false; state.tries = 0;
       if (window.NRStore.resetPartners) window.NRStore.resetPartners();
     }
     if (!f.hasQuery || f.vin) return;
-    var want = Math.max(Number(need) || 0, state.need || 0);
+    /* после смены условий всегда просим минимум одну порцию: иначе при полной
+       странице своих товаров партнёрские не подтянулись бы вовсе */
+    var want = Math.max(Number(need) || 0, state.need || 0, fresh ? BATCH : 0);
     state.need = want;
     if (state.busy) return;
     if (state.loaded >= want || state.loaded >= MAX_LOAD) return;
     if (state.done) return;                       /* по этому подбору у магазина больше нет товаров */
-    var s = shop(); if (!s) return;
+    var s = shop();
+    if (!s) {                                     /* витрина магазина ещё не ответила — попробуем чуть позже */
+      if (!state.waitShop) {
+        state.waitShop = true;
+        setTimeout(function () { state.waitShop = false; ensure(state.need); }, 2000);
+      }
+      return;
+    }
 
     state.busy = true;
     var limit = Math.min(Math.max(want - state.loaded, BATCH), 96);
@@ -5654,6 +5664,7 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function (data) {
         state.busy = false;
+        state.tries = 0;
         var rows = data.products || [];
         state.total = Number(data.count) || 0;
         state.loaded += rows.length;
@@ -5666,7 +5677,13 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
       })
       .catch(function (err) {
         state.busy = false;
-        console.log('[партнёры] товары не получены: ' + err);
+        /* разовая заминка сети не должна оставлять каталог без товаров партнёров */
+        if (state.tries < TRIES) {
+          state.tries++;
+          setTimeout(function () { ensure(state.need); }, state.tries * 1500);
+        } else {
+          console.log('[партнёры] товары не получены: ' + err);
+        }
       });
   }
 
