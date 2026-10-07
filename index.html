@@ -2827,7 +2827,15 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     const brands = [...new Set(ITEMS.map(i => i.brand))].filter(b => norm(b).includes(cq) && cq.length > 1);
     brands.slice(0, 2).forEach(b => rows.push({ brand: b }));
     r.list.slice(0, 6).forEach(it => rows.push({ it }));
-    if (!rows.length) { sg.hidden = true; qIn.setAttribute('aria-expanded', 'false'); return; }
+    if (!rows.length) {
+      /* в нашем каталоге совпадений нет (такие товары бывают у партнёров):
+         не прячем список, а предлагаем сразу показать результаты */
+      sg.innerHTML = '<button class="sg sg-all" role="option" data-all="1"><span class="i">🔍</span><span class="tx">Показать все результаты: «' + esc(raw) + '»</span></button>';
+      sgItems = [];
+      setActive(-1);
+      sg.hidden = false; qIn.setAttribute('aria-expanded', 'true');
+      return;
+    }
     sg.innerHTML = rows.map((row, i) => {
       if (row.it) return `<button class="sg" role="option" data-i="${i}"><span class="i">${row.it.icon}</span><span class="tx">${hl(row.it.title, raw)} <span class="art">· ${hl(row.it.art, raw)}</span></span><span class="ty">${money(row.it.price)}</span></button>`;
       if (row.cat) return `<button class="sg" role="option" data-i="${i}"><span class="i">${row.icon}</span><span class="tx">${hl(row.cat, raw)}</span><span class="ty">категория</span></button>`;
@@ -2890,7 +2898,12 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     else if (row.brand) doSearch(row.brand);
   });
   document.addEventListener('click', e => { if (!e.target.closest('#searchbox')) closeSuggest(); });
-  $('#sbForm').addEventListener('submit', e => { e.preventDefault(); doSearch(qIn.value.trim()); });
+  $('#sbForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const q = qIn.value.trim();
+    if (!q) { openSearch(''); return; }        /* пусто: страница поиска с историей и подборками */
+    doSearch(q, true);                         /* есть запрос: показываем результаты */
+  });
   $('#qClear').addEventListener('click', () => { qIn.value = ''; state.q = ''; state.page = 1; render(); qIn.focus(); buildSuggest(); });
 
   /* ================= ФИЛЬТРЫ / ЧИПЫ ================= */
@@ -3743,9 +3756,24 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     if (!e.target.closest('#mMenu') && !e.target.closest('#menuBtn')) closeMenu();
   });
 
-  // клик по полю в хедере открывает поисковую страницу
-  qIn.readOnly = true;
-  qIn.addEventListener('click', () => openSearch(qIn.value || ''));
+  /* SEARCH-DROPDOWN: поиск в шапке.
+     Компьютер и планшет (≥600px): клик по полю показывает выпадающий список с
+     историей запросов и подсказками, со страницы не уходим; писать можно прямо
+     в поле, Enter и «Найти» показывают результаты.
+     Телефон (≤599px): как раньше — клик открывает страницу поиска. */
+  const searchFieldIsMobile = () => !!(window.matchMedia && window.matchMedia('(max-width: 599px)').matches);
+  const syncSearchFieldMode = () => {
+    qIn.readOnly = searchFieldIsMobile();      /* на телефоне поле ведёт на страницу поиска */
+    if (searchFieldIsMobile()) closeSuggest();
+  };
+  syncSearchFieldMode();
+  window.addEventListener('resize', syncSearchFieldMode);
+  qIn.addEventListener('click', () => {
+    if (searchFieldIsMobile()) { openSearch(qIn.value || ''); return; }
+    qIn.readOnly = false;
+    qIn.focus();
+    buildSuggest();
+  });
   $('#sCancel').addEventListener('click', () => {
     if (window.NRAccount && window.NRAccount.returnToCabinetFromSearch && window.NRAccount.returnToCabinetFromSearch()) return;
     goHome();
