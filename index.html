@@ -56,6 +56,20 @@ input, select { font: inherit; }
 :focus-visible { outline: 2px solid var(--gold-txt); outline-offset: 2px; }
 mark { background: transparent; color: inherit; border-radius: 0; padding: 0; }
 [hidden] { display: none !important; }
+/* PARTNERS-CATALOG: фотографии товаров (карточка, страница товара, просмотр) */
+.p-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pp-gal-main img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; margin: 0 auto; }
+.pp-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lb-img img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; margin: 0 auto; }
+.lb-th img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* когда фотографий много, миниатюры прокручиваются внутри галереи
+   и не растягивают страницу (у своих товаров вид не меняется) */
+.pp-gal { min-width: 0; }
+.pp-thumbs { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
+.pp-thumb { flex: 0 0 auto; }
+.pp-rev-none { margin: 0; padding: 14px 16px; border: 1px dashed var(--border); border-radius: 12px; color: var(--text2); font-size: 14px; }
+#accountApp .card-pic img.card-photo { width: 100%; height: 100%; object-fit: cover; display: block; }
+.p-rating-meta.p-cond { color: var(--text2); font-size: 12px; }
 /* STOCK-GUARD: наличие товара — поп-ап и прозрачное сообщение на карточке */
 .warn-overlay { position: fixed; inset: 0; z-index: 640; display: flex; align-items: center; justify-content: center; padding: 18px; background: rgba(14,14,16,.58); }
 .warn-dialog { position: relative; width: min(480px, 100%); max-height: min(88vh, 720px); overflow: auto; padding: 24px; border-radius: 16px; background: var(--surface); box-shadow: 0 20px 60px rgba(0,0,0,.3); }
@@ -2177,17 +2191,49 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   const PER = 12;
   const CART_STORAGE_KEY = 'narazborku-cart-v1';
   const FAV_STORAGE_KEY = 'narazborku-fav-v1';
+  const FAV_PARTNERS_KEY = 'narazborku-fav-partners-v1';   /* карточки товаров партнёров в избранном */
   class FavSet extends Set {
     add(v) { super.add(v); this.save(); return this; }
     delete(v) { const r = super.delete(v); this.save(); return r; }
-    save() { if (!this.ready) return; try { window.localStorage.setItem(FAV_STORAGE_KEY, JSON.stringify([...this])); } catch (e) { /* только в памяти */ } }
+    save() {
+      if (!this.ready) return;
+      try {
+        window.localStorage.setItem(FAV_STORAGE_KEY, JSON.stringify([...this]));
+        /* товары партнёров приходят с сервера под текущий подбор: сохраняем карточку,
+           чтобы избранное переживало перезагрузку и смену поиска */
+        const snaps = {};
+        this.forEach(id => {
+          const it = ITEMS.find(x => x.id === id && x.partner);
+          if (it) { const copy = Object.assign({}, it); delete copy.favOnly; snaps[id] = copy; }
+        });
+        window.localStorage.setItem(FAV_PARTNERS_KEY, JSON.stringify(snaps));
+      } catch (e) { /* только в памяти */ }
+    }
   }
+  /* карточки товаров партнёров, лежащие в избранном (хранятся отдельно от списка товаров) */
+  let favPartnerSnaps = {};
+  try { favPartnerSnaps = JSON.parse(window.localStorage.getItem(FAV_PARTNERS_KEY) || '{}') || {}; }
+  catch (e) { favPartnerSnaps = {}; }
   const cart = new Map(), fav = new FavSet();
   try {
     const savedFav = JSON.parse(window.localStorage.getItem(FAV_STORAGE_KEY) || '[]');
-    if (Array.isArray(savedFav)) savedFav.forEach(id => { if (ITEMS.some(it => it.id === id)) Set.prototype.add.call(fav, id); });
+    if (Array.isArray(savedFav)) savedFav.forEach(id => {
+      if (ITEMS.some(it => it.id === id) || favPartnerSnaps[id]) Set.prototype.add.call(fav, id);
+    });
   } catch (e) { /* localStorage недоступен */ }
   fav.ready = true;
+  /* возвращаем в список карточки товаров партнёров из избранного (видны только в избранном) */
+  if (fav.size) {
+    try {
+      const snaps = favPartnerSnaps;
+      Object.keys(snaps).forEach(id => {
+        if (!fav.has(id) || ITEMS.some(it => it.id === id)) return;
+        const it = snaps[id];
+        if (!it || !it.partner) return;
+        it.favOnly = true; ITEMS.push(it);
+      });
+    } catch (e) { /* избранное восстановится при следующем подборе */ }
+  }
   try {
     const savedCart = JSON.parse(window.localStorage.getItem(CART_STORAGE_KEY) || '[]');
     if (Array.isArray(savedCart)) savedCart.forEach(entry => {
@@ -2290,33 +2336,38 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   }
   function cardHTML(it, q, gal = true, exactHighlight = true) {
     const inFav = fav.has(it.id);
-    const qtyInCart = cart.get(it.id) || 0;
+    const isPartner = !!it.partner;
+    const qtyInCart = isPartner ? 0 : (cart.get(it.id) || 0);
+    const photo = (it.photos && it.photos.length) ? it.photos[0] : '';
+    const photoHTML = photo ? `<img src="${esc(photo)}" alt="" loading="lazy" decoding="async">` : it.icon;
     const disc = it.old ? '−' + Math.round((it.old - it.price) / it.old * 100) + '%' : '';
     // СКИДКИ ОТКЛЮЧЕНЫ: бэк не подключён — старая цена и процент скрыты на всех карточках.
     // Решим продавать со скидкой: раскомментируйте строку ниже (и парную в карточке товара, pp-priceline).
     // const oldHTML = it.old ? `<s>${money(it.old)}</s><span class="disc">${disc}</span>` : '';
     const oldHTML = '';
     return `<article class="p-card${exactHighlight && state.exact === it ? ' p-exact' : ''}${itemHidden(it) ? ' is-out' : ''}" data-id="${it.id}">
-      <div class="p-img">${it.icon}${it.rate >= 4.8 ? '<span class="p-hit">Хит</span>' : ''}${itemHidden(it) ? '<span class="p-out-veil" aria-hidden="true">Товар закончился<small>Нет в наличии</small></span>' : ''}
+      <div class="p-img">${photoHTML}${!isPartner && it.rate >= 4.8 ? '<span class="p-hit">Хит</span>' : ''}${itemHidden(it) ? '<span class="p-out-veil" aria-hidden="true">Товар закончился<small>Нет в наличии</small></span>' : ''}
         ${gal ? `<button class="p-gal-arr prev" data-gal="-1" aria-label="Предыдущее фото товара"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M8.293 3.293a1 1 0 1 1 1.414 1.414L6.414 8l3.293 3.293a1 1 0 1 1-1.414 1.414l-4-4a1 1 0 0 1 0-1.414z" clip-rule="evenodd"/></svg></button><button class="p-gal-arr next" data-gal="1" aria-label="Следующее фото товара"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M6.293 3.293a1 1 0 0 1 1.414 0l4 4a1 1 0 0 1 0 1.414l-4 4a1 1 0 1 1-1.414-1.414L9.586 8 6.293 4.707a1 1 0 0 1 0-1.414" clip-rule="evenodd"/></svg></button>` : ''}</div>
       <div class="p-body">
         <div class="p-name">${hl(it.title, q)}</div>
         <div class="p-rrow">
-          <div class="p-rating">
+          ${isPartner
+            ? `<div class="p-rating"><span class="p-rating-meta p-cond">${esc(it.cond || 'В наличии')}${it.comment ? ' · ' + esc(it.comment.slice(0, 24)) : ''}</span></div>`
+            : `<div class="p-rating">
             <span class="p-rating-star" style="--star-fill:${Math.max(0, Math.min(100, it.rate / 5 * 100)).toFixed(1)}%" aria-hidden="true">★</span>
             <span class="p-rating-meta">${it.rate.toFixed(1)} · ${it.rev} отзывов</span>
-          </div>
+          </div>`}
           <div class="p-art">арт. ${hl(it.art, q)}</div>
         </div>
         <div class="p-offer">
           <div class="p-price"><b>${money(it.price)}</b>${oldHTML}</div>
-          <div class="p-stock${it.stock ? '' : ' out'}">${itemHidden(it) ? '✖ Нет в наличии' : (it.stock ? '✔ В наличии (' + it.stock + ' шт.)' : '✖ Под заказ 3–5 дней')}</div>
+          <div class="p-stock${it.stock ? '' : ' out'}">${itemHidden(it) ? '✖ Нет в наличии' : (isPartner ? '✔ В наличии' : (it.stock ? '✔ В наличии (' + it.stock + ' шт.)' : '✖ Под заказ 3–5 дней'))}</div>
         </div>
         <div class="p-actions">
-          <div class="p-cart-control" data-p-cart-control>${itemHidden(it) ? '<button type="button" class="p-cart" disabled aria-label="Нет в наличии">✖ Нет в наличии</button>' : productCardCartHTML(it, qtyInCart)}</div>
+          <div class="p-cart-control" data-p-cart-control>${itemHidden(it) ? '<button type="button" class="p-cart" disabled aria-label="Нет в наличии">✖ Нет в наличии</button>' : (isPartner ? partnerCardActionHTML(it) : productCardCartHTML(it, qtyInCart))}</div>
           <button class="p-fav" aria-label="В избранное" aria-pressed="${inFav}">${inFav ? '❤️' : '🤍'}</button>
         </div>
-        <button class="p-sell" type="button" data-sell data-id="${it.id}" aria-label="Написать продавцу: ${esc(it.title)}">✍️ Написать продавцу</button>
+        ${isPartner ? '' : `<button class="p-sell" type="button" data-sell data-id="${it.id}" aria-label="Написать продавцу: ${esc(it.title)}">✍️ Написать продавцу</button>`}
       </div></article>`;
   }
   /* Лендинг и личный кабинет не показываются одновременно: если кабинет открыт,
@@ -2344,12 +2395,16 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     const list = sortList(baseList());
     const shown = list.slice(0, state.page * PER);
     grid.innerHTML = shown.map(it => cardHTML(it, state.q)).join('');
-    $('#moreBtn').hidden = shown.length >= list.length;
+    /* товары партнёров лежат в магазине и подгружаются постранично: сколько
+       карточек нужно для текущей страницы, столько и запрашиваем */
+    const pInfo = (window.NRPartners && window.NRPartners.info) ? window.NRPartners.info() : { extra: 0 };
+    const totalAll = list.length + Math.max(0, pInfo.extra || 0);
+    $('#moreBtn').hidden = shown.length >= totalAll;
 
     $('#rTitle').textContent = state.photo ? 'Результаты по фото' : state.vin ? 'Подбор по VIN' : (state.q ? 'Результаты поиска' : state.cat);
-    $('#rCount').textContent = list.length + ' ' + plural(list.length, ['товар', 'товара', 'товаров']);
-    $('#empty').hidden = list.length > 0;
-    if (!list.length) $('#emptyTx').textContent = 'По запросу «' + (state.q || state.cat) + '» ничего нет. Попробуйте артикул без пробелов или выберите категорию.';
+    $('#rCount').textContent = totalAll + ' ' + plural(totalAll, ['товар', 'товара', 'товаров']);
+    $('#empty').hidden = totalAll > 0;
+    if (!totalAll) $('#emptyTx').textContent = 'По запросу «' + (state.q || state.cat) + '» ничего нет. Попробуйте артикул без пробелов или выберите категорию.';
 
     // VIN-баннер
     if (state.vin) {
@@ -2371,6 +2426,11 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     $('#priceSel').value = state.price;
     $('#sortSel').value = state.sort;
     $('#qClear').hidden = !state.q;
+
+    /* догружаем товары партнёров, если для показанных страниц их не хватает */
+    if (window.NRPartners && window.NRPartners.ensure) {
+      try { window.NRPartners.ensure(state.page * PER - list.length); } catch (e) { /* каталог продолжает работать */ }
+    }
   }
   function renderFavorites() {
     const list = ITEMS.filter(it => fav.has(it.id));
@@ -2391,6 +2451,11 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     $('#favB').textContent = fav.size; $('#favB').hidden = !fav.size;
     $$('[data-fav-badge]').forEach(b => { b.textContent = fav.size; b.hidden = !fav.size; });
     syncCartButtons();
+  }
+  /* Товары партнёров: корзина и оформление — следующий этап, поэтому кнопка
+     «Написать продавцу» (переписка уже работает). */
+  function partnerCardActionHTML(it) {
+    return `<button type="button" class="p-cart" data-sell data-id="${it.id}" aria-label="Написать продавцу: ${esc(it.title)}">✍️ Написать продавцу</button>`;
   }
   function productCardCartHTML(it, qty) {
     if (!qty) return `<button type="button" class="p-cart" data-card-cart-action="add" aria-label="Добавить ${esc(it.title)} в корзину">🛒 В корзину</button>`;
@@ -2423,7 +2488,7 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
       if (!item) return;
       control.innerHTML = itemHidden(item)
         ? '<button type="button" class="p-cart" disabled aria-label="Нет в наличии">✖ Нет в наличии</button>'
-        : productCardCartHTML(item, cart.get(item.id) || 0);
+        : (item.partner ? partnerCardActionHTML(item) : productCardCartHTML(item, cart.get(item.id) || 0));
     });
     const ppCartControl = $('#ppCartControl');
     if (ppCartControl && state.pv) ppCartControl.innerHTML = productCartControlHTML(cart.get(state.pv.id) || 0);
@@ -2480,6 +2545,7 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   function addToCart(id) {
     const item = ITEMS.find(it => it.id === id);
     if (!item) return false;
+    if (item.partner) { openPartnerChat(item); return false; }   // товар партнёра: оформим на следующем этапе, сейчас — переписка
     if (item.live && !(item.stock > 0)) { toast('Товар закончился'); return false; }
     const current = cart.get(id) || 0;
     if (current >= 99) { toast('Максимум 99 шт. одного товара'); return false; }
@@ -2491,6 +2557,7 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   function changeCartQty(id, action) {
     const current = cart.get(id) || 0;
     const line = ITEMS.find(x => x.id === id);
+    if (line && line.partner) return;                       // товары партнёров в корзине не бывают
     if (action === 'remove') { cart.delete(id); persistCart(); renderCart(); syncBadges(); return; }   // удалить можно и обнулённую строку
     if (!current) return;                                   // количество 0: доступно только удаление
     if (line && line.live && !(line.stock > 0)) return;     // товар закончился: количество не меняем
@@ -2593,8 +2660,12 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     if (it.stock) return '✔ В наличии: ' + it.stock + ' шт.';
     return it.live ? '✖ Нет в наличии' : '✖ Под заказ: 3–5 дней';
   }
-  function itemHidden(it) { return !!(it.live && !(it.stock > 0)); }   // нет остатка в магазине — карточку не показываем
-  function itemShown(it) { return !itemHidden(it); }
+  // нет остатка в магазине — карточку не показываем; у товаров партнёров наличие определяет фид
+  function itemHidden(it) { return it.partner ? !(it.stock > 0) : !!(it.live && !(it.stock > 0)); }
+  function itemShown(it) {
+    if (it.partner && it.favOnly) return false;   /* карточка из избранного в каталоге не показывается */
+    return !itemHidden(it);
+  }
   function warnEsc(x) {
     return String(x == null ? '' : x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   }
@@ -2657,6 +2728,7 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   function applyShopStock(map) {
     if (!map) return;
     ITEMS.forEach(it => {
+      if (it.partner) return;                      /* наличие товаров партнёров определяет фид, не склад магазина */
       const rec = map[artKey(it.art)];
       if (!rec) return;                            /* такого товара в магазине нет — данные витрины не трогаем */
       it.live = true;
@@ -2701,8 +2773,11 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     const st = box.querySelector('.pp-stock');
     if (st) {
       st.className = 'pp-stock' + (it.stock ? '' : ' out');
-      st.textContent = it.stock ? '✔ В наличии (' + it.stock + ' шт.)' : (it.live ? '✖ Нет в наличии' : '✖ Под заказ 3–5 дней');
+      st.textContent = it.partner
+        ? (it.stock > 0 ? '✔ В наличии' : '✖ Нет в наличии')          /* у партнёра штук не показываем */
+        : (it.stock ? '✔ В наличии (' + it.stock + ' шт.)' : (it.live ? '✖ Нет в наличии' : '✖ Под заказ 3–5 дней'));
     }
+    if (it.partner) return;                                       /* корзину товару партнёра не подставляем */
     const ppc = $('#ppCartControl');
     if (ppc) ppc.innerHTML = (it.live && !(it.stock > 0))
       ? '<button type="button" class="pp-cartbtn" disabled aria-label="Нет в наличии">✖ Нет в наличии</button>'
@@ -2871,34 +2946,46 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
       <button class="cr-l" data-go="cats">Каталог</button>
       <button class="cr-l" data-go="cat">${esc(it.cat)}</button>
       <b>${esc(it.title)}</b>`;
-    const tints = GALT; galI = 0;
-    $('#ppGalMain').textContent = it.icon;
-    $('#ppGalMain').style.background = tints[0];
-    $('#ppThumbs').innerHTML = tints.map((t, i) =>
-      `<button class="pp-thumb${i ? '' : ' on'}" data-i="${i}" data-t="${t}" style="background:${t}" aria-label="Фото ${i + 1}">${it.icon}</button>`).join('');
+    galI = 0;
+    renderGallery(it);
     $('#ppBuy').innerHTML = `
       <h1>${esc(it.title)}</h1>
-      <div class="pp-rate"><span class="st">${stars(it.rate)}</span> ${it.rate.toFixed(1)} · ${it.rev} отзывов · арт. ${esc(it.art)}</div>
+      ${it.partner ? `<div class="pp-rate">арт. ${esc(it.art)}${it.cond ? ' · ' + esc(it.cond) : ''}</div>` : ''}
+      <div class="pp-rate"${it.partner ? ' hidden' : ''}><span class="st">${stars(it.rate)}</span> ${it.rate.toFixed(1)} · ${it.rev} отзывов · арт. ${esc(it.art)}</div>
       <div class="pp-priceline"><b>${money(it.price)}</b>${ppOldHTML}</div>
-      <div class="pp-stock${it.stock ? '' : ' out'}">${it.stock ? '✔ В наличии (' + it.stock + ' шт.)' : (it.live ? '✖ Нет в наличии' : '✖ Под заказ 3–5 дней')}</div>
+      <div class="pp-stock${it.stock ? '' : ' out'}">${it.stock ? (it.partner ? '✔ В наличии' : '✔ В наличии (' + it.stock + ' шт.)') : (it.live ? '✖ Нет в наличии' : '✖ Под заказ 3–5 дней')}</div>
       <div class="pp-actions">
-        <div class="pp-cart-control" id="ppCartControl">${(it.live && !(it.stock > 0)) ? '<button type="button" class="pp-cartbtn" disabled aria-label="Нет в наличии">✖ Нет в наличии</button>' : productCartControlHTML(qtyInCart)}</div>
+        <div class="pp-cart-control" id="ppCartControl">${it.partner
+          ? `<button type="button" class="pp-cartbtn" data-sell data-id="${it.id}" aria-label="Написать продавцу: ${esc(it.title)}">✍️ Написать продавцу</button>`
+          : ((it.live && !(it.stock > 0)) ? '<button type="button" class="pp-cartbtn" disabled aria-label="Нет в наличии">✖ Нет в наличии</button>' : productCartControlHTML(qtyInCart))}</div>
         <button class="pp-favbtn" id="ppFav" aria-label="В избранное">${fav.has(it.id) ? '❤️' : '🤍'}</button>
       </div>
-      <button class="pp-sell" type="button" data-sell data-id="${it.id}" aria-label="Написать продавцу: ${esc(it.title)}">✍️ Написать продавцу</button>
+      ${it.partner ? '' : `<button class="pp-sell" type="button" data-sell data-id="${it.id}" aria-label="Написать продавцу: ${esc(it.title)}">✍️ Написать продавцу</button>`}
       <h2 class="pp-sub">Характеристики</h2>
       <div class="pp-specs" id="ppSpecs"></div>`;
     const w = (idx * 37) % 900 + 100;
-    const availabilityHTML = it.stock
-      ? `<span class="pp-stock-spec in">✔ В наличии · ${it.stock} шт.</span>`
-      : (it.live ? '<span class="pp-stock-spec out">✖ Нет в наличии</span>' : '<span class="pp-stock-spec out">✖ Под заказ · 3–5 дней</span>');
-    $('#ppSpecs').innerHTML = [
-      ['Бренд', it.brand], ['Артикул', it.art], ['Категория', it.cat],
-      ['Страна производства', COUNTRY[it.brand] || '—'], ['Гарантия', '12 месяцев'],
-      ['Вес в упаковке', w + ' г'], ['Наличие', it.stock ? it.stock + ' шт.' : 'под заказ'],
-      ['Код товара', 'NR-' + String(idx + 1).padStart(5, '0')],
-    ].map(([k, v]) => `<div class="sp"><dt>${k}</dt><dd>${k === 'Наличие' ? availabilityHTML : esc(String(v))}</dd></div>`).join('');
-    $('#ppDesc').innerHTML = `
+    const availabilityHTML = it.partner
+      ? (it.stock > 0
+        ? '<span class="pp-stock-spec in">✔ В наличии</span>'
+        : '<span class="pp-stock-spec out">✖ Нет в наличии</span>')
+      : (it.stock
+        ? `<span class="pp-stock-spec in">✔ В наличии · ${it.stock} шт.</span>`
+        : (it.live ? '<span class="pp-stock-spec out">✖ Нет в наличии</span>' : '<span class="pp-stock-spec out">✖ Под заказ · 3–5 дней</span>'));
+    const specRows = it.partner
+      ? (it.specs || []).concat([['Наличие', it.stock ? 'в наличии' : 'под заказ']])
+      : [
+          ['Бренд', it.brand], ['Артикул', it.art], ['Категория', it.cat],
+          ['Страна производства', COUNTRY[it.brand] || '—'], ['Гарантия', '12 месяцев'],
+          ['Вес в упаковке', w + ' г'], ['Наличие', it.stock ? it.stock + ' шт.' : 'под заказ'],
+          ['Код товара', 'NR-' + String(idx + 1).padStart(5, '0')],
+        ];
+    $('#ppSpecs').innerHTML = specRows
+      .map(([k, v]) => `<div class="sp"><dt>${k}</dt><dd>${k === 'Наличие' ? availabilityHTML : esc(String(v == null ? '' : v))}</dd></div>`).join('');
+    $('#ppDesc').innerHTML = it.partner
+      ? `<p>${esc(it.title)} — ${esc(it.cond ? it.cond.toLowerCase() : 'деталь')} категории «${esc(it.cat)}»${it.brand ? ', ' + esc(it.brand) : ''}. Номер детали: ${esc(it.art)}.</p>`
+        + (it.comment ? `<p>${esc(it.comment)}</p>` : '')
+        + '<p>Состояние и совместимость уточним в переписке — напишите нам, подскажем по вашей комплектации. Отправляем по всей России.</p>'
+      : `
       <p>${esc(it.title)} — товар категории «${esc(it.cat)}» производства ${esc(it.brand)} для повседневной эксплуатации. Деталь произведена на сертифицированной линии, проходит контроль геометрии и маркируется оригинальным артикулом ${esc(it.art)}.</p>
       <p>Подходит для большинства популярных модификаций. Перед заказом сверьте артикул с каталогом производителя или уточните совместимость по VIN — подскажем в чате за 5 минут. В комплекте фирменная упаковка и гарантийный талон НаРазборку.</p>`;
     const dist = it.rate >= 4.7 ? [78, 14, 5, 2, 1] : it.rate >= 4.4 ? [64, 22, 8, 4, 2] : [52, 26, 12, 6, 4];
@@ -2908,6 +2995,16 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
       <div class="pp-bars">${dist.map((d, i) => `<div class="pp-bar"><span>${5 - i}★</span><div class="tr"><div class="fl" style="width:${d}%"></div></div><span>${d}%</span></div>`).join('')}</div>`;
     state.ridx = idx;
     renderRevs();
+    if (it.partner) {                            /* товар партнёра: отзывов по нему ещё нет */
+      $('#ppRevH').textContent = 'Отзывы';
+      $('#ppRevSum').innerHTML = '<p class="pp-rev-none">Отзывов пока нет — товар появился в каталоге недавно. Купили эту деталь? Расскажите о ней в переписке — мы опубликуем отзыв.</p>';
+      $('#ppRevList').innerHTML = '';
+      $('#rvSort').hidden = true;
+    } else {
+      $('#rvSort').hidden = false;
+    }
+    /* похожие: свои товары и товары партнёров этой же категории (у партнёрских
+       берём только уже загруженные — в каталоге их видно так же, как свои) */
     const sim = ITEMS.filter(x => x.cat === it.cat && x.id !== it.id);
     const fill = [...ITEMS].sort((a, b) => b.pop - a.pop).filter(x => x.id !== it.id && !sim.includes(x));
     $('#ppSim').innerHTML = sim.concat(fill).filter(itemShown).slice(0, 8).map(x => cardHTML(x, '')).join('');
@@ -2944,21 +3041,55 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   });
   const GALT = ['var(--surface)', 'var(--surface)', 'var(--surface)', 'var(--surface)'];
   let galI = 0;
+  /* У товаров партнёров есть настоящие фотографии — галерея показывает их;
+     у остальных карточек, как и раньше, мягкие подложки с иконкой. */
+  const partnerPhotos = it => (it && it.photos && it.photos.length) ? it.photos : null;
+  const galItems = it => partnerPhotos(it) || GALT;
+  const galThumbHTML = (it, i) => partnerPhotos(it)
+    ? `<button class="pp-thumb${i ? '' : ' on'}" data-i="${i}" aria-label="Фото ${i + 1}"><img src="${esc(it.photos[i])}" alt="" loading="lazy"></button>`
+    : `<button class="pp-thumb${i ? '' : ' on'}" data-i="${i}" data-t="${it.tint || GALT[i % GALT.length]}" style="background:${it.tint || GALT[i % GALT.length]}" aria-label="Фото ${i + 1}">${it.icon}</button>`;
+  const renderGallery = it => {
+    const photos = partnerPhotos(it);
+    $('#ppThumbs').innerHTML = photos
+      ? it.photos.map((_, i) => galThumbHTML(it, i)).join('')
+      : GALT.map((t, i) => galThumbHTML({ icon: it.icon, tint: t }, i)).join('');
+    syncGal();
+  };
+  const paintGalMain = it => {
+    const main = $('#ppGalMain'), photos = partnerPhotos(it);
+    if (photos) { main.innerHTML = `<img src="${esc(photos[Math.min(galI, photos.length - 1)])}" alt="">`; main.style.background = ''; }
+    else { main.textContent = it.icon; main.style.background = GALT[galI]; }
+  };
+  const paintLbMain = it => {
+    const lb = $('#lbImg'), photos = partnerPhotos(it);
+    if (photos) { lb.innerHTML = `<img src="${esc(photos[Math.min(galI, photos.length - 1)])}" alt="">`; lb.style.background = ''; }
+    else { lb.textContent = it.icon; lb.style.background = GALT[galI]; }
+  };
   const syncGal = () => {
-    $('#ppGalMain').style.background = GALT[galI];
+    const it = state.pv || { icon: '📦' };
+    paintGalMain(it);
     $$('#ppThumbs .pp-thumb').forEach((x, i) => x.classList.toggle('on', i === galI));
     if (!$('#lightbox').hidden) {
-      $('#lbImg').style.background = GALT[galI];
+      paintLbMain(it);
       $$('#lbThumbs .lb-th').forEach((x, i) => x.classList.toggle('on', i === galI));
     }
   };
-  const lbStep = d => { galI = (galI + d + GALT.length) % GALT.length; syncGal(); };
+  /* листание: у товаров с фото — по фотографиям, у остальных — по подложкам */
+  const stepLb = d => {
+    const photos = partnerPhotos(state.pv);
+    const n = photos ? photos.length : GALT.length;
+    galI = (galI + d + n) % n;
+    syncGal();
+  };
+  const lbStep = d => stepLb(d);
   const openLb = () => {
-    const lb = $('#lightbox');
-    $('#lbThumbs').innerHTML = GALT.map((t, i) =>
-      `<button class="lb-th" data-i="${i}" style="background:${t}" aria-label="Фото ${i + 1}">${state.pv.icon}</button>`).join('');
-    $('#lbCount').textContent = GALT.length;
-    $('#lbImg').textContent = state.pv.icon;
+    const lb = $('#lightbox'), it = state.pv || {};
+    const photos = partnerPhotos(it);
+    galI = Math.min(galI, (photos ? photos.length : GALT.length) - 1);
+    $('#lbThumbs').innerHTML = photos
+      ? photos.map((p, i) => `<button class="lb-th${i === galI ? ' on' : ''}" data-i="${i}" aria-label="Фото ${i + 1}"><img src="${esc(p)}" alt="" loading="lazy"></button>`).join('')
+      : GALT.map((t, i) => `<button class="lb-th${i === galI ? ' on' : ''}" data-i="${i}" style="background:${t}" aria-label="Фото ${i + 1}">${it.icon || '📦'}</button>`).join('');
+    $('#lbCount').textContent = photos ? photos.length : GALT.length;
     lb.hidden = false; document.body.style.overflow = 'hidden';
     syncGal(); $('#lbClose').focus();
   };
@@ -2983,8 +3114,8 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   });
   $('#ppGalMain').addEventListener('click', () => { if (state.pv) openLb(); });
   $('#lbClose').addEventListener('click', closeLb);
-  $('#lbPrev').addEventListener('click', () => lbStep(-1));
-  $('#lbNext').addEventListener('click', () => lbStep(1));
+  $('#lbPrev').addEventListener('click', () => stepLb(-1));
+  $('#lbNext').addEventListener('click', () => stepLb(1));
   $('#lbThumbs').addEventListener('click', e => {
     const t = e.target.closest('.lb-th'); if (!t) return;
     galI = +t.dataset.i; syncGal();
@@ -2992,8 +3123,8 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   document.addEventListener('keydown', e => {
     if ($('#lightbox').hidden) return;
     if (e.key === 'Escape') closeLb();
-    else if (e.key === 'ArrowLeft') lbStep(-1);
-    else if (e.key === 'ArrowRight') lbStep(1);
+    else if (e.key === 'ArrowLeft') stepLb(-1);
+    else if (e.key === 'ArrowRight') stepLb(1);
   });
   $('#ppBuy').addEventListener('click', e => {
     const it = state.pv; if (!it) return;
@@ -3734,6 +3865,22 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     render(); window.scrollTo({ top: 0, behavior: 'smooth' });
   });
 
+  /* перерисовать витрину целиком: подборка недели + результаты */
+  function repaintAll() {
+    const strip = document.getElementById('hits');
+    if (strip) {
+      strip.innerHTML = ITEMS.filter(itemShown).sort((a, b) =>
+        (b.showcase ? 1 : 0) - (a.showcase ? 1 : 0) || b.pop - a.pop
+      ).slice(0, 10).map(i => cardHTML(i, '', true)).join('');
+    }
+    render();
+  }
+  /* «Написать продавцу» по товару (используется и для товаров партнёров) */
+  function openPartnerChat(it) {
+    if (window.NRSellerChat && window.NRSellerChat.open) window.NRSellerChat.open(it);
+    else toast('Чат откроется после загрузки страницы');
+  }
+
   /* ================= КОРЗИНА / ИЗБРАННОЕ ================= */
   const toastEl = $('#toast'); let tt;
   const toast = tx => { toastEl.textContent = tx; toastEl.classList.add('show'); clearTimeout(tt); tt = setTimeout(() => toastEl.classList.remove('show'), 2000); };
@@ -3741,9 +3888,13 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     const card = e.target.closest('.p-card'); if (!card) return;
     const garr = e.target.closest('.p-gal-arr');
     if (garr) {
-      const gi = (parseInt(card.dataset.gi || '0', 10) + parseInt(garr.dataset.gal, 10) + GALT.length) % GALT.length;
+      const cardItem = ITEMS.find(x => x.id === card.dataset.id);
+      const gal = (cardItem && cardItem.photos && cardItem.photos.length) ? cardItem.photos : GALT;
+      const gi = (parseInt(card.dataset.gi || '0', 10) + parseInt(garr.dataset.gal, 10) + gal.length) % gal.length;
       card.dataset.gi = gi;
-      card.querySelector('.p-img').style.background = GALT[gi];
+      const img = card.querySelector('.p-img img');
+      if (img && cardItem && cardItem.photos && cardItem.photos.length) img.src = gal[gi];   // фото товара
+      else card.querySelector('.p-img').style.background = gal[gi];
       return;
     }
     const id = card.dataset.id, it = ITEMS.find(x => x.id === id);
@@ -4025,7 +4176,7 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     applyShop(records) {
       const keyOf = a => artKey(String(a || ''));
       const index = new Map();
-      ITEMS.forEach(it => { const k = keyOf(it.art); if (k) index.set(k, it); });
+      ITEMS.forEach(it => { if (it.partner) return; const k = keyOf(it.art); if (k) index.set(k, it); });
       let updated = 0, added = 0;
       records.forEach(r => {
         const k = keyOf(r.sku);
@@ -4060,17 +4211,66 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
         }
       });
       if (updated || added) {
-        try {
-          const strip = document.getElementById('hits');
-          if (strip) {
-            strip.innerHTML = ITEMS.filter(itemShown).sort((a, b) =>
-              (b.showcase ? 1 : 0) - (a.showcase ? 1 : 0) || b.pop - a.pop
-            ).slice(0, 10).map(i => cardHTML(i, '', true)).join('');
-          }
-          render();
-        } catch (err) { /* страница остаётся на прежних данных */ }
+        try { repaintAll(); } catch (err) { /* страница остаётся на прежних данных */ }
       }
       return { updated: updated, added: added, total: ITEMS.length };
+    },
+    /* перерисовать витрину: подборка недели + список (после прихода данных из магазина) */
+    repaint() { try { repaintAll(); } catch (err) { } },
+    /* текущие условия подбора — по ним витрина запрашивает товары партнёров */
+    filters() {
+      const pr = PRICE_FILTERS[state.price];
+      return {
+        q: state.q || '', cat: state.cat || '', price: state.price || 'all',
+        price_min: pr ? pr.min : null,
+        price_max: pr && isFinite(pr.max) ? pr.max : null,
+        stock: !!state.stock, sort: state.sort || '', page: state.page || 1,
+        hasQuery: !!(state.q || state.cat), vin: !!state.vin,
+      };
+    },
+    /* товары партнёров: складываем в общий каталог как обычные товары —
+       с теми же ключами поиска, что у своих (название, бренд, категория, артикул) */
+    addPartnerItems(rows) {
+      const base = (window.NRShop && window.NRShop.base) || '';
+      let added = 0;
+      (rows || []).forEach(r => {
+        const id = 'p' + r.id;
+        if (ITEMS.some(x => x.id === id)) return;
+        const cat = CAT_ICON[r.cat] ? r.cat : 'Прочее';
+        const car = [r.make, r.model].filter(Boolean).join(' ');
+        const title = String(r.title || '').trim() + (car ? ' (' + car + (r.year ? ', ' + r.year : '') + ')' : '');
+        const brand = r.manufacturer || r.make || '';
+        const art = r.part_number || r.article || '';
+        const photos = (r.photos || []).map(p => /^https?:/i.test(p) ? p : base + p);
+        const specs = [
+          ['Марка', r.make], ['Модель', r.model], ['Год', r.year], ['Кузов', r.body],
+          ['Двигатель', r.engine], ['Цвет', r.color], ['Состояние', r.condition],
+          ['Номер детали', r.part_number], ['Артикул', r.article],
+        ].filter(([, v]) => v);
+        const fresh = {
+          id: id, partner: true, cat: cat, brand: brand, title: title, art: art,
+          price: Number(r.price) || 0, old: 0, stock: r.in_stock ? 1 : 0, rate: 0, rev: 0,
+          icon: CAT_ICON[cat], photos: photos, photosCount: r.photos_count || photos.length,
+          cond: r.condition || '', comment: r.comment || '', specs: specs,
+          nq: norm(title), bq: norm(brand), cq: norm(cat), aq: artKey(art), pop: 0,
+        };
+        /* карточка могла остаться от избранного — тогда обновляем её свежими данными */
+        const at = ITEMS.findIndex(x => x.id === fresh.id);
+        if (at >= 0) ITEMS[at] = fresh; else ITEMS.push(fresh);
+        added++;
+      });
+      return added;
+    },
+    /* сменились условия подбора: товары партнёров прошлого запроса убираем,
+       а те, что лежат в избранном, оставляем — иначе они пропадут из «Избранного» */
+    resetPartners() {
+      for (let i = ITEMS.length - 1; i >= 0; i--) {
+        const it = ITEMS[i];
+        if (!it.partner) continue;
+        if (fav.has(it.id)) { it.favOnly = true; continue; }
+        ITEMS.splice(i, 1);
+      }
+      try { fav.save(); } catch (e) { /* избранное останется в памяти */ }
     },
     fav: {
       list: () => ITEMS.filter(it => fav.has(it.id)).map(it => it.id),
@@ -4442,11 +4642,13 @@ function vFavorites() {
   var items = NR.fav.list().map(byId).filter(Boolean);
   var heart = '<svg class="i" viewBox="0 0 24 24" style="fill:currentColor" aria-hidden="true">' + P.favorites + '</svg>';
   var cards = items.length ? '<div class="cards">' + items.map(function (it) {
-    var out = !it.stock;
-    return '<article class="card"><div class="card-ph"><button class="card-pic" type="button" data-act="open-product" data-id="' + it.id + '" aria-label="Открыть карточку: ' + esc(it.title) + '"><span aria-hidden="true">' + it.icon + '</span></button><button class="icon-btn" type="button" data-act="unfav" data-id="' + it.id + '" aria-label="Убрать из избранного: ' + esc(it.title) + '" title="Убрать из избранного">' + heart + '</button></div><div class="card-b"><small>' + esc(it.brand) + ' · арт. ' + esc(it.art) + '</small><b class="t"><button class="plink" type="button" data-act="open-product" data-id="' + it.id + '">' + esc(it.title) + '</button></b>' +
+    var out = it.partner ? !(it.stock > 0) : !it.stock;
+    return '<article class="card"><div class="card-ph"><button class="card-pic" type="button" data-act="open-product" data-id="' + it.id + '" aria-label="Открыть карточку: ' + esc(it.title) + '">' + (it.photos && it.photos[0] ? '<img class="card-photo" src="' + it.photos[0] + '" alt="" loading="lazy">' : '<span aria-hidden="true">' + it.icon + '</span>') + '</button><button class="icon-btn" type="button" data-act="unfav" data-id="' + it.id + '" aria-label="Убрать из избранного: ' + esc(it.title) + '" title="Убрать из избранного">' + heart + '</button></div><div class="card-b"><small>' + esc(it.brand) + ' · арт. ' + esc(it.art) + '</small><b class="t"><button class="plink" type="button" data-act="open-product" data-id="' + it.id + '">' + esc(it.title) + '</button></b>' +
       '<div class="price">' + money(it.price) + '</div>' +
-      '<span class="stock' + (out ? ' out' : '') + '">' + ic(out ? 'clock' : 'check') + (out ? 'Под заказ: 3–5 дней' : 'В наличии: ' + it.stock + '\u00A0шт.') + '</span>' +
-      cartRowHTML(it) + '</div></article>';
+      '<span class="stock' + (out ? ' out' : '') + '">' + ic(out ? 'clock' : 'check') + (out ? 'Под заказ: 3–5 дней' : (it.partner ? 'В наличии' : 'В наличии: ' + it.stock + '\u00A0шт.')) + '</span>' +
+      (it.partner
+        ? '<button class="cart-ic" type="button" data-sell data-id="' + it.id + '" aria-label="Написать продавцу: ' + esc(it.title) + '" title="Написать продавцу">✍️</button>'
+        : cartRowHTML(it)) + '</div></article>';
   }).join('') + '</div>' : empty('favorites', 'Пока нет сохранённых запчастей', 'Нажмите на сердечко в карточке товара — и он появится здесь.', findBtn());
   var all = items.length ? '<button class="btn btn-dark sm" type="button" data-act="fav-all">' + ic('cart') + 'Всё в корзину</button>' : '';
   return heading('Избранное', 'Сохранённые товары: сравнивайте цены и наличие.', all) + cards;
@@ -5402,6 +5604,80 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
   sync();
 })();
 </script>
+<script id="nrPartners">
+/* ================= ТОВАРЫ ПАРТНЁРОВ В КАТАЛОГЕ =================
+   Магазин забирает товары авторазборок по фид-ссылкам и отдаёт их витрине как
+   обычные товары — покупатель не видит ни разборки, ни склада. Здесь только
+   подгрузка: сколько карточек нужно для текущей страницы каталога, столько и
+   запрашиваем; весь каталог разом страница не тянет. */
+(function () {
+  var BATCH = 24, MAX_LOAD = 600;
+  var state = { key: '', total: 0, loaded: 0, busy: false, need: 0, done: false };
+
+  function shop() { var s = window.NRShop; return (s && s.ok && s.base && s.key) ? s : null; }
+  function filters() { var S = window.NRStore; return (S && S.filters) ? S.filters() : null; }
+  function keyOf(f) { return [f.q, f.cat, f.price, f.stock ? 1 : 0].join('|'); }
+
+  function info() {
+    var f = filters();
+    if (!f || !f.hasQuery || f.vin) return { extra: 0, total: 0, loaded: 0 };
+    if (keyOf(f) !== state.key) return { extra: 0, total: 0, loaded: 0, pending: true };
+    return { extra: Math.max(0, state.total - state.loaded), total: state.total, loaded: state.loaded };
+  }
+
+  function ensure(need) {
+    var f = filters();
+    if (!f) return;
+    var key = keyOf(f);
+    if (key !== state.key) {                      /* условия подбора сменились — начинаем заново */
+      state.key = key; state.total = 0; state.loaded = 0; state.need = 0; state.done = false;
+      if (window.NRStore.resetPartners) window.NRStore.resetPartners();
+    }
+    if (!f.hasQuery || f.vin) return;
+    var want = Math.max(Number(need) || 0, state.need || 0);
+    state.need = want;
+    if (state.busy) return;
+    if (state.loaded >= want || state.loaded >= MAX_LOAD) return;
+    if (state.done) return;                       /* по этому подбору у магазина больше нет товаров */
+    var s = shop(); if (!s) return;
+
+    state.busy = true;
+    var limit = Math.min(Math.max(want - state.loaded, BATCH), 96);
+    var url = s.base + '/store/partners/products?limit=' + limit + '&offset=' + state.loaded +
+      '&q=' + encodeURIComponent(f.q || '') + '&cat=' + encodeURIComponent(f.cat || '');
+    if (f.sort === 'asc') url += '&sort=price_asc';
+    else if (f.sort === 'desc') url += '&sort=price_desc';
+    if (f.price_min !== null && f.price_min !== undefined) url += '&price_min=' + f.price_min;
+    if (f.price_max !== null && f.price_max !== undefined) url += '&price_max=' + f.price_max;
+
+    fetch(url, { headers: { 'x-publishable-api-key': s.key } })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (data) {
+        state.busy = false;
+        var rows = data.products || [];
+        state.total = Number(data.count) || 0;
+        state.loaded += rows.length;
+        if (!rows.length) { state.total = state.loaded; state.done = true; }   /* больше товаров нет */
+        var added = window.NRStore.addPartnerItems ? window.NRStore.addPartnerItems(rows) : 0;
+        /* витрину перерисовываем только когда действительно добавились товары:
+           иначе страница перерисовывалась бы по кругу и мешала покупателю */
+        if (added > 0) { try { window.NRStore.repaint(); } catch (e) { /* витрина остаётся рабочей */ } }
+        if (rows.length) ensure(state.need);       /* нужно ещё — просим следующую порцию */
+      })
+      .catch(function (err) {
+        state.busy = false;
+        console.log('[партнёры] товары не получены: ' + err);
+      });
+  }
+
+  window.NRPartners = {
+    ensure: ensure,
+    info: info,
+    state: function () { return { key: state.key, total: state.total, loaded: state.loaded, busy: state.busy }; }
+  };
+})();
+</script>
+
 <script id="shopAccount">
 /* ================= ЛИЧНЫЙ КАБИНЕТ ЧЕРЕЗ МАГАЗИН =================
    Вход, регистрация, список заказов и оформление заказа работают с настоящим
