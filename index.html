@@ -5705,6 +5705,7 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
     if (state.busy) return;
     if (state.loaded >= want || state.loaded >= MAX_LOAD) return;
     if (state.done) return;                       /* по этому подбору у магазина больше нет товаров */
+    if (state.trouble) return;                    /* витрина недоступна: ждём кнопку «Попробовать снова» */
     var addrList = shops();
     if (!addrList.length) {
       /* адрес витрины ещё не известен (страница только начала загружаться) */
