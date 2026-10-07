@@ -2373,7 +2373,7 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
           <div class="p-cart-control" data-p-cart-control>${itemHidden(it) ? '<button type="button" class="p-cart" disabled aria-label="Нет в наличии">✖ Нет в наличии</button>' : (isPartner ? partnerCardActionHTML(it) : productCardCartHTML(it, qtyInCart))}</div>
           <button class="p-fav" aria-label="В избранное" aria-pressed="${inFav}">${inFav ? '❤️' : '🤍'}</button>
         </div>
-        ${isPartner ? '' : `<button class="p-sell" type="button" data-sell data-id="${it.id}" aria-label="Написать продавцу: ${esc(it.title)}">✍️ Написать продавцу</button>`}
+        <button class="p-sell" type="button" data-sell data-id="${it.id}" aria-label="Написать продавцу: ${esc(it.title)}">✍️ Написать продавцу</button>
       </div></article>`;
   }
   /* Лендинг и личный кабинет не показываются одновременно: если кабинет открыт,
@@ -2470,10 +2470,11 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     $$('[data-fav-badge]').forEach(b => { b.textContent = fav.size; b.hidden = !fav.size; });
     syncCartButtons();
   }
-  /* Товары партнёров: корзина и оформление — следующий этап, поэтому кнопка
-     «Написать продавцу» (переписка уже работает). */
+  /* PARTNER-CART: партнёрский товар кладётся в корзину так же, как свой товар —
+     1 шт. за нажатие. Счётчика количества на карточке нет: сколько единиц у партнёра,
+     фид не сообщает — количество покупатель задаёт в корзине. */
   function partnerCardActionHTML(it) {
-    return `<button type="button" class="p-cart" data-sell data-id="${it.id}" aria-label="Написать продавцу: ${esc(it.title)}">✍️ Написать продавцу</button>`;
+    return `<button type="button" class="p-cart" data-card-cart-action="add" aria-label="Добавить ${esc(it.title)} в корзину">🛒 В корзину</button>`;
   }
   function productCardCartHTML(it, qty) {
     if (!qty) return `<button type="button" class="p-cart" data-card-cart-action="add" aria-label="Добавить ${esc(it.title)} в корзину">🛒 В корзину</button>`;
@@ -2563,8 +2564,8 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   function addToCart(id) {
     const item = ITEMS.find(it => it.id === id);
     if (!item) return false;
-    if (item.partner) { openPartnerChat(item); return false; }   // товар партнёра: оформим на следующем этапе, сейчас — переписка
-    if (item.live && !(item.stock > 0)) { toast('Товар закончился'); return false; }
+    /* PARTNER-CART: у партнёрского товара наличие определяет фид, у своего — склад магазина */
+    if (item.partner ? !(item.stock > 0) : (item.live && !(item.stock > 0))) { toast('Товар закончился'); return false; }
     const current = cart.get(id) || 0;
     if (current >= 99) { toast('Максимум 99 шт. одного товара'); return false; }
     cart.set(id, current + 1);
@@ -2675,13 +2676,16 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !warnModal.hidden) closeWarn(); });
 
   function stockText(it) {
+    /* PARTNER-CART: количество у партнёрского товара фид не сообщает — пишем без числа */
+    if (it.partner) return it.stock ? '✔ В наличии' : '✖ Нет в наличии';
     if (it.stock) return '✔ В наличии: ' + it.stock + ' шт.';
     return it.live ? '✖ Нет в наличии' : '✖ Под заказ: 3–5 дней';
   }
   // нет остатка в магазине — карточку не показываем; у товаров партнёров наличие определяет фид
   function itemHidden(it) { return it.partner ? !(it.stock > 0) : !!(it.live && !(it.stock > 0)); }
   function itemShown(it) {
-    if (it.partner && it.favOnly) return false;   /* карточка из избранного в каталоге не показывается */
+    /* карточка из избранного или уже лежащая в корзине в каталоге не показывается */
+    if (it.partner && (it.favOnly || it.cartOnly)) return false;
     return !itemHidden(it);
   }
   function warnEsc(x) {
@@ -2757,6 +2761,7 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     const out = [], over = [], zeroed = [];
     for (const [id, qty] of cart.entries()) {
       const it = ITEMS.find(x => x.id === id); if (!it) continue;
+      if (it.partner) continue;                    /* наличие товаров партнёров определяет фид, не склад магазина */
       const rec = map ? map[artKey(it.art)] : null;
       const live = !!(it.live || rec);
       if (!live) continue;                         /* демо-позиция: остатки магазина к ней не относятся */
@@ -4375,6 +4380,9 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
         const it = ITEMS[i];
         if (!it.partner) continue;
         if (fav.has(it.id)) { it.favOnly = true; continue; }
+        /* PARTNER-CART: товар лежит в корзине — оставляем его в памяти, иначе
+           при следующем поиске позиция пропала бы из корзины */
+        if (cart.has(it.id)) { it.cartOnly = true; continue; }
         ITEMS.splice(i, 1);
       }
       try { fav.save(); } catch (e) { /* избранное останется в памяти */ }
@@ -6058,6 +6066,9 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
         vid = found ? s.variants[found] : null;
       }
       if (vid) out.push({ variant_id: vid, q: pair[1], title: it.title });
+      /* PARTNER-CART: товара партнёра в каталоге магазина нет — позиция уходит «под заказ»:
+         только название, количество и цена (в копейках, как считает магазин) */
+      else if (it && it.partner) out.push({ custom: true, title: it.title, q: pair[1], unit_price: Math.round(Number(it.price) * 100) });
       else missing.push(it ? it.title : pair[0]);
     });
     return { lines: out, missing: missing };
@@ -6103,6 +6114,7 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
         cartId = r.cart.id;
         return resolved.lines.reduce(function (p, l) {
           return p.then(function () {
+            if (l.custom) return api('/store/carts/' + cartId + '/custom-line-items', { method: 'POST', body: { title: l.title, quantity: l.q, unit_price: l.unit_price } });
             return api('/store/carts/' + cartId + '/line-items', { method: 'POST', body: { variant_id: l.variant_id, quantity: l.q } });
           });
         }, Promise.resolve());
