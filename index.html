@@ -1796,12 +1796,6 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
 
   <!-- Результаты (там же, без переходов) -->
   <section id="results" hidden>
-    <!-- LK-SEARCH: возврат в раздел кабинета, из которого начали поиск -->
-    <div class="vinbar" id="cabBack" hidden>
-      <span class="e" aria-hidden="true">🧾</span>
-      <span><b>Поиск из кабинета</b><span id="cabBackTx">Вернуться в свой раздел</span></span>
-      <button type="button" id="cabBackBtn">← В кабинет</button>
-    </div>
     <div class="vinbar" id="vinbar" hidden>
       <span class="e">🚗</span>
       <span><b id="vinTitle"></b><span id="vinSub"></span></span>
@@ -2386,14 +2380,6 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
      разделы лендинга остаются скрытыми, даже когда витрина синхронизируется в фоне
      и зовёт render() (иначе карточки товаров возвращаются поверх кабинета). */
   function cabinetOpen() { var app = document.getElementById('accountApp'); return !!(app && !app.hidden); }
-  /* LK-SEARCH: на выдаче показываем возврат в раздел кабинета, из которого начали поиск */
-  function syncCabBack() {
-    var bar = $('#cabBack'); if (!bar) return;
-    var acc = window.NRAccount;
-    var label = acc && acc.hasReturnRoute && acc.hasReturnRoute() ? acc.returnLabel() : '';
-    bar.hidden = !label;
-    if (label) $('#cabBackTx').textContent = 'Вернуться в раздел «' + label + '»';
-  }
   function render() {
     const hasQuery = !!(state.q || state.cat || state.vin);
     const inCab = cabinetOpen();
@@ -2410,7 +2396,6 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     idle.hidden = inCab || hasQuery;
     results.hidden = inCab || !hasQuery;
     $('#vinbar').hidden = !state.vin;
-    syncCabBack();
     if (!hasQuery) { $('#suggest').hidden = true; $('#activeLine').innerHTML = ''; syncBadges(); return; }
 
     const list = sortList(baseList());
@@ -2893,7 +2878,7 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   }
   function doSearch(q, flow) {
     /* LK-SEARCH: поиск из кабинета — кабинет уходит с экрана, но раздел запоминается:
-       на выдаче остаётся кнопка «← В кабинет», она вернёт в тот же раздел. */
+       из выдачи в него вернёт кнопка «Мой кабинет» в шапке. */
     if (window.NRAccount && window.NRAccount.leaveForSearch) window.NRAccount.leaveForSearch();
     state.searchFlow = !!flow; state.photo = false;
     state.page = 1; state.vin = ''; state.exact = null;
@@ -3863,11 +3848,6 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     if (window.NRAccount && window.NRAccount.returnToCabinetFromSearch && window.NRAccount.returnToCabinetFromSearch()) return;
     goHome();
   });
-  /* LK-SEARCH: кнопка возврата в кабинет на странице выдачи */
-  $('#cabBackBtn').addEventListener('click', () => {
-    if (window.NRAccount && window.NRAccount.returnToCabinetFromSearch && window.NRAccount.returnToCabinetFromSearch()) return;
-    goHome();
-  });
   $('#sForm').addEventListener('submit', e => {
     e.preventDefault();
     const q = $('#sq').value.trim();
@@ -4022,6 +4002,9 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
       return;
     }
     const id = card.dataset.id, it = ITEMS.find(x => x.id === id);
+    /* CARD-CLICK: товара больше нет в подборе (сменились условия поиска) — карточка
+       не должна оставаться без действия: перерисовываем выдачу честно */
+    if (!it) { render(); return; }
     const cartAction = e.target.closest('[data-card-cart-action]'), fbtn = e.target.closest('.p-fav');
     if (cartAction) {
       const action = cartAction.dataset.cardCartAction;
@@ -5260,7 +5243,7 @@ document.addEventListener('click', function (e) {
   if (t.closest('#catBtn, #mobileTabs [data-tab="catalog"], #catPanel')) return;
   /* LK-SEARCH: поиск из ЛК — запоминаем раздел, из которого начали поиск.
      На пк и планшете кабинет не закрываем: подсказки раскрываются поверх раздела,
-     поиск уводит на выдачу, откуда вернёт кнопка «← В кабинет».
+     поиск уводит на выдачу, откуда вернёт кнопка «Мой кабинет» в шапке.
      На телефоне поле ведёт на страницу поиска — её «Отмена» вернёт в тот же раздел. */
   if (t.closest('#q, #qClear, #sbForm')) {
     accountReturnRoute = location.hash || '#cabinet';
@@ -5289,14 +5272,6 @@ window.NRAccount = {
     return { name: S.profile.name || '', phone: S.profile.phone || '', address: a ? addrLine(a) : '' };
   },
   clearCabinetReturn: function () { accountReturnRoute = null; },
-  /* LK-SEARCH: раздел кабинета, из которого начали поиск */
-  hasReturnRoute: function () { return !!accountReturnRoute; },
-  returnLabel: function () {
-    var v = String(accountReturnRoute || '').replace(/^#cabinet\/?/, '').split('/')[0] || 'overview';
-    var t = { overview: 'Главная', orders: 'Мои заказы', garage: 'Гараж', searches: 'Мои поиски',
-      messages: 'Сообщения', favorites: 'Избранное', addresses: 'Адреса доставки', profile: 'Профиль' };
-    return t[v] || 'Главная';
-  },
   /* Поиск из кабинета: уводим кабинет с экрана, но маршрут возврата сохраняем
      (любой способ начать поиск из ЛК — поле, «Найти», подсказка) */
   leaveForSearch: function () {
