@@ -71,6 +71,13 @@ mark { background: transparent; color: inherit; border-radius: 0; padding: 0; }
 #accountApp .card-pic img.card-photo { width: 100%; height: 100%; object-fit: cover; display: block; }
 .empty-retry { margin: 16px auto 0; display: block; padding: 12px 24px; border-radius: 12px; background: var(--dark); color: var(--warm); font-weight: 700; font-size: 14px; }
 .empty-retry[hidden] { display: none; }
+/* INFINITE-SCROLL: кнопка «Показать ещё» больше не нужна — товары подгружаются при прокрутке */
+.more-btn { display: none !important; }
+.more-loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 22px 0 6px; color: var(--text2); font-size: 14px; font-weight: 600; }
+.more-loading[hidden] { display: none; }
+.more-loading::before { content: ''; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--amber); border-radius: 50%; animation: mspin .8s linear infinite; }
+@keyframes mspin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .more-loading::before { animation: none; } }
 .p-rating-meta.p-cond { color: var(--text2); font-size: 12px; }
 /* STOCK-GUARD: наличие товара — поп-ап и прозрачное сообщение на карточке */
 .warn-overlay { position: fixed; inset: 0; z-index: 640; display: flex; align-items: center; justify-content: center; padding: 18px; background: rgba(14,14,16,.58); }
@@ -1833,6 +1840,8 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
       <button type="button" class="empty-retry" id="emptyRetry" hidden>Попробовать снова</button>
       <div class="pop-chips" id="emptyChips" style="justify-content:center"></div>
     </div>
+    <div class="more-loading" id="moreLoading" hidden>Загружаем ещё товары…</div>
+    <div id="moreSentinel" aria-hidden="true"></div>
     <button class="more-btn" id="moreBtn" hidden>Показать ещё <span aria-hidden="true">▾</span></button>
   </section>
   <!-- Поисковая страница: строка + Отменить, история, продолжить поиск, рекомендации -->
@@ -2402,7 +2411,8 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
        карточек нужно для текущей страницы, столько и запрашиваем */
     const pInfo = (window.NRPartners && window.NRPartners.info) ? window.NRPartners.info() : { extra: 0 };
     const totalAll = list.length + Math.max(0, pInfo.extra || 0);
-    $('#moreBtn').hidden = shown.length >= totalAll;
+    $('#moreBtn').hidden = true;                    /* кнопки нет: товары подгружаются при прокрутке */
+    scheduleMore();
 
     $('#rTitle').textContent = state.photo ? 'Результаты по фото' : state.vin ? 'Подбор по VIN' : (state.q ? 'Результаты поиска' : state.cat);
     $('#rCount').textContent = totalAll + ' ' + plural(totalAll, ['товар', 'товара', 'товаров']);
@@ -2773,7 +2783,8 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
         const list = sortList(baseList());
         const shown = list.slice(0, state.page * PER);
         grid.innerHTML = shown.map(it => cardHTML(it, state.q)).join('');
-        $('#moreBtn').hidden = shown.length >= list.length;
+        $('#moreBtn').hidden = true;
+        scheduleMore();
         $('#rCount').textContent = list.length + ' ' + plural(list.length, ['товар', 'товара', 'товаров']);
         $('#empty').hidden = list.length > 0;
       }
@@ -3540,7 +3551,55 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   $('#stockTgl').addEventListener('click', () => { state.stock = !state.stock; state.page = 1; render(); });
   $('#priceSel').addEventListener('change', e => { state.price = e.target.value; state.page = 1; render(); });
   $('#sortSel').addEventListener('change', e => { state.sort = e.target.value; render(); });
-  $('#moreBtn').addEventListener('click', () => { state.page++; render(); });
+  /* INFINITE-SCROLL: товары подгружаются, когда покупатель доходит до конца списка.
+     Метка стоит внизу выдачи; как только она попадает в поле зрения — показываем
+     следующую порцию. Так работает и на компьютере, и на телефоне, и в каталоге. */
+  const moreSentinel = $('#moreSentinel'), moreLoading = $('#moreLoading');
+  let moreBusy = false, moreTimer = 0;
+
+  function moreCounts() {
+    const list = sortList(baseList());
+    const need = state.page * PER;
+    const shown = Math.min(list.length, need);
+    const pInfo = (window.NRPartners && window.NRPartners.info) ? window.NRPartners.info() : { extra: 0, pending: false };
+    const totalAll = list.length + Math.max(0, pInfo.extra || 0);
+    return { list, need, shown, totalAll, pending: !!pInfo.pending, iBlock: Math.max(0, need - list.length) };
+  }
+
+  function moreCheck() {
+    moreTimer = 0;
+    if (moreBusy || results.hidden) return;
+    const { shown, totalAll, pending } = moreCounts();
+
+    /* товаров больше нет: ничего не грузим и не дёргаем витрину */
+    if (shown >= totalAll && !pending) { moreLoading.hidden = true; return; }
+
+    /* метка ещё далеко от экрана — ждём прокрутки */
+    const box = moreSentinel.getBoundingClientRect();
+    if (box.top > (window.innerHeight || 800) + 500) { moreLoading.hidden = true; return; }
+
+    moreBusy = true;
+    moreLoading.hidden = false;
+    state.page++;                                  /* следующая порция товаров */
+    render();
+    moreBusy = false;
+    /* после перерисовки проверяем снова: экран может быть ещё не заполнен */
+    scheduleMore(400);
+  }
+
+  function scheduleMore(delay) {
+    if (moreTimer) return;
+    moreTimer = setTimeout(moreCheck, delay || 250);
+  }
+
+  window.addEventListener('scroll', () => scheduleMore(150), { passive: true });
+  window.addEventListener('resize', () => scheduleMore(300));
+  if (window.IntersectionObserver) {
+    /* основной способ: метка под списком входит в поле зрения */
+    new IntersectionObserver(entries => { if (entries.some(e => e.isIntersecting)) scheduleMore(50); },
+      { rootMargin: '700px 0px' }).observe(moreSentinel);
+  }
+  scheduleMore(600);
   $('#vinReset').addEventListener('click', () => { state.vin = ''; state.page = 1; render(); });
   $('#activeLine').addEventListener('click', e => {
     const b = e.target.closest('[data-rm]'); if (!b) return;
