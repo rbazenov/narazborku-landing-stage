@@ -573,8 +573,10 @@ main { max-width: 1440px; margin: 0 auto; padding: 14px var(--pad) 30px; }
 .p-cart:active { transform: scale(.96); }
 .p-cart.added, .p-cart.in-cart { background: var(--dark); color: var(--warm); }
 /* PARTNER-GO-COLOR: «Перейти» заметно отличается от исходной тёмной кнопки добавления. */
-.p-cart.partner-go { background: var(--amber); color: var(--dark); }
-.p-cart.partner-go:hover { background: var(--amber-hover); }
+.p-cart.partner-go { background: #d2b36a; color: var(--dark); }
+.p-cart.partner-go:hover { background: #d2b36a; }
+.pp-cartbtn.partner-go { background: #d2b36a; border-color: #d2b36a; color: var(--dark); }
+.pp-cartbtn.partner-go:hover { background: #d2b36a; border-color: #d2b36a; }
 .p-cart:disabled, .p-cart-qty-btn:disabled { opacity: .5; cursor: not-allowed; }
 .p-cart-qty { flex: 0 0 clamp(78px, 44%, 96px); min-width: 0; height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 0; padding: 2px; border: 1px solid var(--border); border-radius: 9px; background: var(--gray); }
 .p-cart-qty-btn { flex: 1 1 0; min-width: 0; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 6px; color: var(--gold-txt-d); font-size: 16px; line-height: 1; font-weight: 800; background: transparent; }
@@ -2517,7 +2519,7 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   }
   /* На странице товара продавца сохраняем то же понятное состояние кнопки. */
   function partnerProductCartHTML(it) {
-    if (cart.get(it.id)) return `<button type="button" class="pp-cartbtn in-cart" data-pp-cart-action="open" aria-label="Товар в корзине. Перейти в корзину">Перейти</button>`;
+    if (cart.get(it.id)) return `<button type="button" class="pp-cartbtn in-cart partner-go" data-pp-cart-action="open" aria-label="Товар в корзине. Перейти в корзину">Перейти</button>`;
     return `<button type="button" class="pp-cartbtn" data-pp-cart-action="add" aria-label="Добавить ${esc(it.title)} в корзину">🛒 В корзину</button>`;
   }
   const isMobileCardLayout = () => !!(window.matchMedia && window.matchMedia('(max-width: 599px)').matches);
@@ -2638,7 +2640,7 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     if (!cartPage.hidden) renderCart();
     return true;
   }
-  function askPartnerCartRemoval(id, line) {
+  function askCartRemoval(id, line) {
     openWarn({
       title: 'Удалить товар из корзины?',
       body: '<p>Удалить «' + esc(line.title) + '» из корзины?</p>',
@@ -2651,19 +2653,19 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
       }
     });
   }
-  function changeCartQty(id, action) {
+  function changeCartQty(id, action, fromCart = false) {
     const current = cart.get(id) || 0;
     const line = ITEMS.find(x => x.id === id);
-    /* PARTNER-ONE-ITEM: у продавца нет числового остатка. Увеличение выключено,
-       а любое удаление позиции подтверждает покупатель. */
-    if (line && line.partner && (action === 'decrease' || action === 'remove')) {
-      if (current) askPartnerCartRemoval(id, line);
-      return;
-    }
+    const deletesLine = action === 'remove' || (action === 'decrease' && current <= 1);
+    /* PARTNER-ONE-ITEM: у продавца нет числового остатка, его единственная позиция
+       всегда удаляется с подтверждением. На телефоне в корзине то же подтверждение
+       требуется для любого товара, но только когда позиция действительно удаляется. */
+    const needsConfirm = !!line && deletesLine && (line.partner || (fromCart && isMobileCardLayout()));
+    if (needsConfirm) { if (current) askCartRemoval(id, line); return; }
     if (action === 'remove') { cart.delete(id); persistCart(); renderCart(); syncBadges(); return; }   // удалить можно и обнулённую строку
     if (!current) return;                                   // количество 0: доступно только удаление
     if (line && line.live && !(line.stock > 0)) return;     // товар закончился: количество не меняем
-    if (action === 'remove' || (action === 'decrease' && current <= 1)) cart.delete(id);
+    if (action === 'decrease' && current <= 1) cart.delete(id);
     else if (action === 'increase') cart.set(id, Math.min(99, current + 1));
     else if (action === 'decrease') cart.set(id, Math.max(1, current - 1));
     persistCart(); renderCart();
@@ -4157,7 +4159,7 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
       if (item) openProduct(item);
       return;
     }
-    changeCartQty(row.dataset.cartId, button.dataset.cartAction);
+    changeCartQty(row.dataset.cartId, button.dataset.cartAction, true);
   });
   $('#cartBackBtn').addEventListener('click', closeCart);
   $('#cartBrowseBtn').addEventListener('click', goHome);
