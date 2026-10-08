@@ -87,6 +87,11 @@ mark { background: transparent; color: inherit; border-radius: 0; padding: 0; }
 .warn-btn-primary { flex: 1 1 200px; min-height: 46px; padding: 0 18px; border-radius: 11px; background: var(--amber); color: var(--dark); font-size: 14px; font-weight: 800; }
 .warn-btn-primary:hover { background: var(--amber-hover); }
 .warn-btn-ghost { flex: 0 0 auto; min-height: 46px; padding: 0 18px; border-radius: 11px; background: var(--gray); color: var(--dark); font-size: 14px; font-weight: 700; }
+@media (max-width: 599px) {
+  /* В подтверждении удаления обе кнопки всегда остаются в одной строке. */
+  .warn-actions { flex-wrap: nowrap; }
+  .warn-actions .warn-btn-primary, .warn-actions .warn-btn-ghost { flex: 1 1 0; min-width: 0; padding-left: 10px; padding-right: 10px; }
+}
 .cart-item-out .cart-thumb, .cart-item-out .cart-item-unit { opacity: .55; }
 .cart-item-out .cart-line-total { color: var(--text2); }
 .p-card.is-out .p-img { cursor: pointer; }
@@ -567,6 +572,9 @@ main { max-width: 1440px; margin: 0 auto; padding: 14px var(--pad) 30px; }
 .p-cart { flex: 1 1 auto; min-width: 0; min-height: 34px; display: flex; align-items: center; justify-content: center; gap: 3px; white-space: nowrap; background: var(--dark); color: var(--warm); border-radius: 9px; padding: 7px 5px; font-size: 10.5px; font-weight: 700; transition: transform .12s, background .2s; }
 .p-cart:active { transform: scale(.96); }
 .p-cart.added, .p-cart.in-cart { background: var(--dark); color: var(--warm); }
+/* PARTNER-GO-COLOR: «Перейти» заметно отличается от исходной тёмной кнопки добавления. */
+.p-cart.partner-go { background: var(--amber); color: var(--dark); }
+.p-cart.partner-go:hover { background: var(--amber-hover); }
 .p-cart:disabled, .p-cart-qty-btn:disabled { opacity: .5; cursor: not-allowed; }
 .p-cart-qty { flex: 0 0 clamp(78px, 44%, 96px); min-width: 0; height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 0; padding: 2px; border: 1px solid var(--border); border-radius: 9px; background: var(--gray); }
 .p-cart-qty-btn { flex: 1 1 0; min-width: 0; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 6px; color: var(--gold-txt-d); font-size: 16px; line-height: 1; font-weight: 800; background: transparent; }
@@ -773,7 +781,7 @@ button.cart-item-name:focus-visible { outline: 2px solid var(--gold-txt); outlin
 .cart-qty button:disabled { opacity: .4; cursor: not-allowed; }
 .cart-qty output { min-width: 28px; text-align: center; font-size: 13px; font-weight: 700; }
 /* PARTNER-ONE-ITEM: фид сообщает наличие, но не количество — в корзине доступна только одна штука. */
-.cart-qty.partner-qty output { min-width: 64px; }
+.cart-qty.partner-qty output { min-width: 28px; }
 .cart-line-total { font-size: 14px; font-weight: 800; white-space: nowrap; }
 .cart-remove-btn { flex: 0 0 36px; width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--text2); transition: background .15s, border-color .15s, color .15s; }
 .cart-remove-btn:hover { border-color: var(--gold-txt); background: var(--warm); color: var(--gold-txt-d); }
@@ -2504,24 +2512,29 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   /* PARTNER-ONE-ITEM: у продавца в фиде есть только признак наличия, без остатка.
      Поэтому можно добавить одну штуку; после добавления кнопка ведёт в корзину. */
   function partnerCardActionHTML(it) {
-    if (cart.get(it.id)) return `<button type="button" class="p-cart in-cart" data-card-cart-action="open" aria-label="Товар в корзине. Перейти в корзину">Перейти</button>`;
+    if (cart.get(it.id)) return `<button type="button" class="p-cart in-cart partner-go" data-card-cart-action="open" aria-label="Товар в корзине. Перейти в корзину">Перейти</button>`;
     return `<button type="button" class="p-cart" data-card-cart-action="add" aria-label="Добавить ${esc(it.title)} в корзину">🛒 В корзину</button>`;
   }
   /* На странице товара продавца сохраняем то же понятное состояние кнопки. */
   function partnerProductCartHTML(it) {
-    if (cart.get(it.id)) return `<button type="button" class="pp-cartbtn" data-pp-cart-action="open" aria-label="Товар в корзине. Перейти в корзину">Перейти</button>`;
+    if (cart.get(it.id)) return `<button type="button" class="pp-cartbtn in-cart" data-pp-cart-action="open" aria-label="Товар в корзине. Перейти в корзину">Перейти</button>`;
     return `<button type="button" class="pp-cartbtn" data-pp-cart-action="add" aria-label="Добавить ${esc(it.title)} в корзину">🛒 В корзину</button>`;
   }
+  const isMobileCardLayout = () => !!(window.matchMedia && window.matchMedia('(max-width: 599px)').matches);
   function productCardCartHTML(it, qty) {
     if (!qty) return `<button type="button" class="p-cart" data-card-cart-action="add" aria-label="Добавить ${esc(it.title)} в корзину">🛒 В корзину</button>`;
     const atLimit = qty >= 99;
+    const qtyControl = `<div class="p-cart-qty" role="group" aria-label="Изменить количество товара">
+      <button type="button" class="p-cart-qty-btn" data-card-cart-action="decrease" aria-label="Уменьшить количество">−</button>
+      <output class="p-cart-qty-count" aria-live="polite">${qty}</output>
+      <button type="button" class="p-cart-qty-btn" data-card-cart-action="increase" aria-label="Увеличить количество"${atLimit ? ' disabled' : ''}>+</button>
+    </div>`;
+    /* MOBILE-CARD-QTY: у товара с известным остатком счётчик заменяет кнопку
+       «В корзину», а «Написать продавцу» остаётся отдельной кнопкой ниже. */
+    if (isMobileCardLayout()) return `<div class="p-cart-row p-cart-row-mobile-qty" role="group" aria-label="Количество товара в корзине: ${qty}">${qtyControl}</div>`;
     return `<div class="p-cart-row" role="group" aria-label="Количество товара в корзине: ${qty}">
       <button type="button" class="p-cart in-cart" data-card-cart-action="open" aria-label="Перейти в корзину">🛒 В корзину</button>
-      <div class="p-cart-qty" role="group" aria-label="Изменить количество товара">
-        <button type="button" class="p-cart-qty-btn" data-card-cart-action="decrease" aria-label="Уменьшить количество">−</button>
-        <output class="p-cart-qty-count" aria-live="polite">${qty}</output>
-        <button type="button" class="p-cart-qty-btn" data-card-cart-action="increase" aria-label="Увеличить количество"${atLimit ? ' disabled' : ''}>+</button>
-      </div>
+      ${qtyControl}
     </div>`;
   }
   function productCartControlHTML(qty) {
@@ -2587,9 +2600,9 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
         <div class="cart-item-unit"><span class="cart-unit-label">Цена за штуку</span><b>${money(it.price)}</b></div>
         <div class="cart-controls">
           <div class="cart-control-actions">
-            <div class="cart-qty${it.partner ? ' partner-qty' : ''}" role="group" aria-label="Количество товара${it.partner ? ': 1 штука' : ''}">
+            <div class="cart-qty${it.partner ? ' partner-qty' : ''}" role="group" aria-label="Количество товара${it.partner ? ': 1' : ''}">
               <button type="button" data-cart-action="decrease" aria-label="Уменьшить количество"${zeroed ? ' disabled' : ''}>−</button>
-              <output>${it.partner ? '1 штука' : qty}</output>
+              <output>${it.partner ? '1' : qty}</output>
               <button type="button" data-cart-action="increase" aria-label="Увеличить количество"${(zeroed || it.partner || qty >= 99) ? ' disabled' : ''}>+</button>
             </div>
             <button type="button" class="cart-remove-btn" data-cart-action="remove" aria-label="Удалить ${esc(it.title)} из корзины" title="Удалить товар">
@@ -4130,6 +4143,8 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   const syncHdr = () => document.documentElement.style.setProperty('--hdr', Math.ceil(hdrEl.getBoundingClientRect().height) + 'px');
   if ('ResizeObserver' in window) new ResizeObserver(syncHdr).observe(hdrEl);
   window.addEventListener('resize', syncHdr);
+  /* При смене ширины карточка обычного товара переключается между кнопкой и счётчиком. */
+  window.addEventListener('resize', syncCartButtons);
   syncHdr();
 
   $('#cartItems').addEventListener('click', e => {
@@ -4336,6 +4351,9 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     const tab = e.target.closest('[data-tab]'); if (!tab) return;
     if (tab.dataset.tab === 'home') {
       if (!catPanel.hidden) closeCp();
+      /* MOBILE-CART-RETURN: из корзины, открытой из выдачи, «Главная» возвращает
+         к тому же поисковому результату, а не сбрасывает запрос в начальный экран. */
+      if (!cartPage.hidden && cartReturnSnapshot && cartReturnSnapshot.pages.results === false) { closeCart(); return; }
       $('#logo').click();
     } else if (tab.dataset.tab === 'catalog') {
       if (hdr.hidden) { hdr.hidden = false; syncHdr(); }
