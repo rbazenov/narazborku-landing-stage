@@ -772,6 +772,8 @@ button.cart-item-name:focus-visible { outline: 2px solid var(--gold-txt); outlin
 .cart-qty button:hover:not(:disabled) { background: var(--gray); }
 .cart-qty button:disabled { opacity: .4; cursor: not-allowed; }
 .cart-qty output { min-width: 28px; text-align: center; font-size: 13px; font-weight: 700; }
+/* PARTNER-ONE-ITEM: фид сообщает наличие, но не количество — в корзине доступна только одна штука. */
+.cart-qty.partner-qty output { min-width: 64px; }
 .cart-line-total { font-size: 14px; font-weight: 800; white-space: nowrap; }
 .cart-remove-btn { flex: 0 0 36px; width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--text2); transition: background .15s, border-color .15s, color .15s; }
 .cart-remove-btn:hover { border-color: var(--gold-txt); background: var(--warm); color: var(--gold-txt-d); }
@@ -2261,7 +2263,11 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     if (Array.isArray(savedCart)) savedCart.forEach(entry => {
       if (!Array.isArray(entry) || entry.length !== 2) return;
       const [id, rawQty] = entry, qty = Number(rawQty);
-      if ((ITEMS.some(it => it.id === id) || cartPartnerSnaps[id]) && Number.isInteger(qty) && qty >= 0) cart.set(id, Math.min(qty, 99));
+      if ((ITEMS.some(it => it.id === id) || cartPartnerSnaps[id]) && Number.isInteger(qty) && qty >= 0) {
+        const item = ITEMS.find(it => it.id === id) || cartPartnerSnaps[id];
+        /* PARTNER-ONE-ITEM: старые корзины тоже приводим к 1 шт. — фид не сообщает остаток. */
+        cart.set(id, item && item.partner ? Math.min(qty, 1) : Math.min(qty, 99));
+      }
     });
   } catch (e) { /* localStorage может быть недоступен в приватном или встроенном режиме */ }
   /* PARTNER-CART-FIX: карточки товаров продавца, лежащих в корзине (в каталоге не показываются) */
@@ -2495,16 +2501,15 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     $$('[data-fav-badge]').forEach(b => { b.textContent = fav.size; b.hidden = !fav.size; });
     syncCartButtons();
   }
-  /* PARTNER-CART: партнёрский товар кладётся в корзину так же, как свой товар —
-     1 шт. за нажатие. Счётчика количества на карточке нет: сколько единиц у партнёра,
-     фид не сообщает — количество покупатель задаёт в корзине. */
+  /* PARTNER-ONE-ITEM: у продавца в фиде есть только признак наличия, без остатка.
+     Поэтому можно добавить одну штуку; после добавления кнопка ведёт в корзину. */
   function partnerCardActionHTML(it) {
+    if (cart.get(it.id)) return `<button type="button" class="p-cart in-cart" data-card-cart-action="open" aria-label="Товар в корзине. Перейти в корзину">Перейти</button>`;
     return `<button type="button" class="p-cart" data-card-cart-action="add" aria-label="Добавить ${esc(it.title)} в корзину">🛒 В корзину</button>`;
   }
-  /* PARTNER-CART: та же кнопка на странице товара — тоже без счётчика: количество
-     единиц у партнёра фид не сообщает, счётчик остаётся у товаров каталога,
-     где магазин знает остаток */
+  /* На странице товара продавца сохраняем то же понятное состояние кнопки. */
   function partnerProductCartHTML(it) {
+    if (cart.get(it.id)) return `<button type="button" class="pp-cartbtn" data-pp-cart-action="open" aria-label="Товар в корзине. Перейти в корзину">Перейти</button>`;
     return `<button type="button" class="pp-cartbtn" data-pp-cart-action="add" aria-label="Добавить ${esc(it.title)} в корзину">🛒 В корзину</button>`;
   }
   function productCardCartHTML(it, qty) {
@@ -2582,10 +2587,10 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
         <div class="cart-item-unit"><span class="cart-unit-label">Цена за штуку</span><b>${money(it.price)}</b></div>
         <div class="cart-controls">
           <div class="cart-control-actions">
-            <div class="cart-qty" role="group" aria-label="Количество товара">
+            <div class="cart-qty${it.partner ? ' partner-qty' : ''}" role="group" aria-label="Количество товара${it.partner ? ': 1 штука' : ''}">
               <button type="button" data-cart-action="decrease" aria-label="Уменьшить количество"${zeroed ? ' disabled' : ''}>−</button>
-              <output>${qty}</output>
-              <button type="button" data-cart-action="increase" aria-label="Увеличить количество"${(zeroed || qty >= 99) ? ' disabled' : ''}>+</button>
+              <output>${it.partner ? '1 штука' : qty}</output>
+              <button type="button" data-cart-action="increase" aria-label="Увеличить количество"${(zeroed || it.partner || qty >= 99) ? ' disabled' : ''}>+</button>
             </div>
             <button type="button" class="cart-remove-btn" data-cart-action="remove" aria-label="Удалить ${esc(it.title)} из корзины" title="Удалить товар">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2m-10 0 1 14h12l1-14M10 11v5M14 11v5"/></svg>
@@ -2608,17 +2613,40 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     /* PARTNER-CART: у партнёрского товара наличие определяет фид, у своего — склад магазина */
     if (item.partner ? !(item.stock > 0) : (item.live && !(item.stock > 0))) { toast('Товар закончился'); return false; }
     const current = cart.get(id) || 0;
-    if (current >= 99) { toast('Максимум 99 шт. одного товара'); return false; }
-    cart.set(id, current + 1);
+    /* PARTNER-ONE-ITEM: остаток не указан, поэтому максимум — одна штука. */
+    if (item.partner) {
+      if (current) return true;
+      cart.set(id, 1);
+    } else {
+      if (current >= 99) { toast('Максимум 99 шт. одного товара'); return false; }
+      cart.set(id, current + 1);
+    }
     persistCart(); syncBadges();
     if (!cartPage.hidden) renderCart();
     return true;
   }
+  function askPartnerCartRemoval(id, line) {
+    openWarn({
+      title: 'Удалить товар из корзины?',
+      body: '<p>Удалить «' + esc(line.title) + '» из корзины?</p>',
+      actions: [
+        { act: 'cancel', label: 'Оставить' },
+        { act: 'remove', label: 'Удалить', primary: true }
+      ],
+      handlers: {
+        remove: () => { closeWarn(); cart.delete(id); persistCart(); renderCart(); syncBadges(); }
+      }
+    });
+  }
   function changeCartQty(id, action) {
     const current = cart.get(id) || 0;
     const line = ITEMS.find(x => x.id === id);
-    /* PARTNER-CART: товар партнёра лежит в корзине как позиция «под заказ» — количество
-       и удаление доступны наравне со своими товарами, остатков склада у него нет */
+    /* PARTNER-ONE-ITEM: у продавца нет числового остатка. Увеличение выключено,
+       а любое удаление позиции подтверждает покупатель. */
+    if (line && line.partner && (action === 'decrease' || action === 'remove')) {
+      if (current) askPartnerCartRemoval(id, line);
+      return;
+    }
     if (action === 'remove') { cart.delete(id); persistCart(); renderCart(); syncBadges(); return; }   // удалить можно и обнулённую строку
     if (!current) return;                                   // количество 0: доступно только удаление
     if (line && line.live && !(line.stock > 0)) return;     // товар закончился: количество не меняем
