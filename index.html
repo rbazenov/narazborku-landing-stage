@@ -2476,6 +2476,12 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   function partnerCardActionHTML(it) {
     return `<button type="button" class="p-cart" data-card-cart-action="add" aria-label="Добавить ${esc(it.title)} в корзину">🛒 В корзину</button>`;
   }
+  /* PARTNER-CART: та же кнопка на странице товара — тоже без счётчика: количество
+     единиц у партнёра фид не сообщает, счётчик остаётся у товаров каталога,
+     где магазин знает остаток */
+  function partnerProductCartHTML(it) {
+    return `<button type="button" class="pp-cartbtn" data-pp-cart-action="add" aria-label="Добавить ${esc(it.title)} в корзину">🛒 В корзину</button>`;
+  }
   function productCardCartHTML(it, qty) {
     if (!qty) return `<button type="button" class="p-cart" data-card-cart-action="add" aria-label="Добавить ${esc(it.title)} в корзину">🛒 В корзину</button>`;
     const atLimit = qty >= 99;
@@ -2510,7 +2516,9 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
         : (item.partner ? partnerCardActionHTML(item) : productCardCartHTML(item, cart.get(item.id) || 0));
     });
     const ppCartControl = $('#ppCartControl');
-    if (ppCartControl && state.pv) ppCartControl.innerHTML = productCartControlHTML(cart.get(state.pv.id) || 0);
+    if (ppCartControl && state.pv) ppCartControl.innerHTML = state.pv.partner
+      ? partnerProductCartHTML(state.pv)
+      : productCartControlHTML(cart.get(state.pv.id) || 0);
   }
   function renderCart() {
     const entries = [];
@@ -2576,7 +2584,8 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   function changeCartQty(id, action) {
     const current = cart.get(id) || 0;
     const line = ITEMS.find(x => x.id === id);
-    if (line && line.partner) return;                       // товары партнёров в корзине не бывают
+    /* PARTNER-CART: товар партнёра лежит в корзине как позиция «под заказ» — количество
+       и удаление доступны наравне со своими товарами, остатков склада у него нет */
     if (action === 'remove') { cart.delete(id); persistCart(); renderCart(); syncBadges(); return; }   // удалить можно и обнулённую строку
     if (!current) return;                                   // количество 0: доступно только удаление
     if (line && line.live && !(line.stock > 0)) return;     // товар закончился: количество не меняем
@@ -2995,11 +3004,11 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
       <div class="pp-stock${it.stock ? '' : ' out'}">${it.stock ? (it.partner ? '✔ В наличии' : '✔ В наличии (' + it.stock + ' шт.)') : (it.live ? '✖ Нет в наличии' : '✖ Под заказ 3–5 дней')}</div>
       <div class="pp-actions">
         <div class="pp-cart-control" id="ppCartControl">${it.partner
-          ? `<button type="button" class="pp-cartbtn" data-sell data-id="${it.id}" aria-label="Написать продавцу: ${esc(it.title)}">✍️ Написать продавцу</button>`
+          ? partnerProductCartHTML(it)
           : ((it.live && !(it.stock > 0)) ? '<button type="button" class="pp-cartbtn" disabled aria-label="Нет в наличии">✖ Нет в наличии</button>' : productCartControlHTML(qtyInCart))}</div>
         <button class="pp-favbtn" id="ppFav" aria-label="В избранное">${fav.has(it.id) ? '❤️' : '🤍'}</button>
       </div>
-      ${it.partner ? '' : `<button class="pp-sell" type="button" data-sell data-id="${it.id}" aria-label="Написать продавцу: ${esc(it.title)}">✍️ Написать продавцу</button>`}
+      <button class="pp-sell" type="button" data-sell data-id="${it.id}" aria-label="Написать продавцу: ${esc(it.title)}">✍️ Написать продавцу</button>
       <h2 class="pp-sub">Характеристики</h2>
       <div class="pp-specs" id="ppSpecs"></div>`;
     const w = (idx * 37) % 900 + 100;
