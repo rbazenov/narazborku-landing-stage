@@ -2198,6 +2198,22 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   const CART_STORAGE_KEY = 'narazborku-cart-v1';
   const FAV_STORAGE_KEY = 'narazborku-fav-v1';
   const FAV_PARTNERS_KEY = 'narazborku-fav-partners-v1';   /* карточки товаров партнёров в избранном */
+  /* PARTNER-CART-FIX: карточки товаров продавца, лежащих в корзине */
+  const CART_PARTNERS_KEY = 'narazborku-cart-partners-v1';
+  let cartPartnerSnaps = {};
+  try { cartPartnerSnaps = JSON.parse(window.localStorage.getItem(CART_PARTNERS_KEY) || '{}') || {}; }
+  catch (e) { cartPartnerSnaps = {}; }
+  const partnerCartAsked = {};                   /* по каким позициям уже спрашивали витрину */
+  function saveCartPartnerSnaps() {
+    try {
+      const snaps = {};
+      cart.forEach((qty, id) => {
+        const it = ITEMS.find(x => x.id === id && x.partner);
+        if (it) { const copy = Object.assign({}, it); delete copy.favOnly; delete copy.cartOnly; snaps[id] = copy; }
+      });
+      window.localStorage.setItem(CART_PARTNERS_KEY, JSON.stringify(snaps));
+    } catch (e) { /* хранилище недоступно — корзина работает до перезагрузки */ }
+  }
   class FavSet extends Set {
     add(v) { super.add(v); this.save(); return this; }
     delete(v) { const r = super.delete(v); this.save(); return r; }
@@ -2245,11 +2261,20 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
     if (Array.isArray(savedCart)) savedCart.forEach(entry => {
       if (!Array.isArray(entry) || entry.length !== 2) return;
       const [id, rawQty] = entry, qty = Number(rawQty);
-      if (ITEMS.some(it => it.id === id) && Number.isInteger(qty) && qty >= 0) cart.set(id, Math.min(qty, 99));
+      if ((ITEMS.some(it => it.id === id) || cartPartnerSnaps[id]) && Number.isInteger(qty) && qty >= 0) cart.set(id, Math.min(qty, 99));
     });
   } catch (e) { /* localStorage может быть недоступен в приватном или встроенном режиме */ }
+  /* PARTNER-CART-FIX: карточки товаров продавца, лежащих в корзине (в каталоге не показываются) */
+  try {
+    Object.keys(cartPartnerSnaps).forEach(id => {
+      if (!cart.has(id) || ITEMS.some(it => it.id === id)) return;
+      const it = cartPartnerSnaps[id];
+      if (!it || !it.partner) return;
+      it.cartOnly = true; ITEMS.push(it);
+    });
+  } catch (e) { /* позиция подгрузится при открытии корзины */ }
   function persistCart() {
-    try { window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify([...cart.entries()])); }
+    try { saveCartPartnerSnaps(); window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify([...cart.entries()])); }
     catch (e) { /* корзина останется в памяти на время текущего сеанса */ }
   }
 
@@ -2523,10 +2548,17 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
   function renderCart() {
     const entries = [];
     let invalidEntry = false;
+    let pending = 0;                              /* позиции продавца, которые ещё подгружаются */
     for (const [id, qty] of cart.entries()) {
       const it = ITEMS.find(x => x.id === id);
-      if (!it || !Number.isInteger(qty) || qty < 0) { cart.delete(id); invalidEntry = true; continue; }
-      entries.push({ it, qty });
+      if (it && Number.isInteger(qty) && qty >= 0) { entries.push({ it, qty }); continue; }
+      /* PARTNER-CART-FIX: карточки товара продавца в памяти ещё нет — позицию не
+         выбрасываем, сначала запрашиваем товар у витрины по идентификатору */
+      if (!it && /^ppprod_/.test(id) && Number.isInteger(qty) && qty > 0) {
+        if (!partnerCartAsked[id]) { partnerCartAsked[id] = 1; try { window.NRStore.loadPartnerItems([id]); } catch (e) { /* повторим при следующем открытии */ } }
+        pending++; continue;
+      }
+      cart.delete(id); invalidEntry = true;
     }
     if (invalidEntry) persistCart();
     const count = cartCount();
@@ -2564,7 +2596,8 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
       </article>`;
     }).join('');
     $('#cartItems').hidden = entries.length === 0;
-    $('#cartEmpty').hidden = entries.length !== 0;
+    /* пока позиция подгружается, «пустой корзиной» не пугаем */
+    $('#cartEmpty').hidden = entries.length !== 0 || pending > 0;
     $('#cartSummary').hidden = entries.length === 0;
     $('#cartPage .cart-layout').classList.toggle('is-empty', entries.length === 0);
     syncBadges();
@@ -4382,6 +4415,37 @@ main > #info.route-enter { animation: nr-screen-enter 230ms var(--ease); }
       });
       return added;
     },
+    /* PARTNER-CART-FIX: товары продавца, лежащие в корзине, спрашиваем у витрины
+       точечно (ids=…): нужны, когда страницу открыли заново и карточек в памяти нет */
+    loadPartnerItems(ids) {
+      const list = (ids || []).filter(id => /^ppprod_/.test(String(id))).slice(0, 50);
+      const shop = window.NRShop || {};
+      const key = shop.key || (window.NRShopPick && window.NRShopPick.key);
+      if (!list.length || !shop.base || !key) return;
+      const url = shop.base + '/store/partners/products?limit=' + list.length +
+        '&ids=' + encodeURIComponent(list.map(id => String(id).slice(1)).join(','));
+      fetch(url, { headers: { 'x-publishable-api-key': key } })
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(data => {
+          const rows = data.products || [];
+          const got = {};
+          rows.forEach(r => { got['p' + r.id] = 1; });
+          /* цена и наличие — свежие из витрины: старую карточку заменяем новой */
+          list.forEach(id => {
+            if (!got[id]) return;
+            const at = ITEMS.findIndex(x => x.id === id && x.partner);
+            if (at >= 0 && !fav.has(id)) ITEMS.splice(at, 1);
+          });
+          const added = window.NRStore.addPartnerItems(rows);
+          /* товар пропал из фида: держать его в корзине нельзя */
+          let dropped = 0;
+          list.forEach(id => { if (!got[id] && cart.has(id)) { cart.delete(id); delete partnerCartAsked[id]; dropped++; } });
+          if (dropped) persistCart();
+          if (added || dropped) { try { repaint(); } catch (e) { /* витрина остаётся рабочей */ } }
+          if (!cartPage.hidden) renderCart();
+        })
+        .catch(() => { list.forEach(id => { delete partnerCartAsked[id]; }); });   /* витрина недоступна — попробуем позже */
+    },
     /* сменились условия подбора: товары партнёров прошлого запроса убираем,
        а те, что лежат в избранном, оставляем — иначе они пропадут из «Избранного» */
     resetPartners() {
@@ -4457,6 +4521,12 @@ var STORE = 'narazborku-account-v1', AUTH_KEY = 'narazborku-auth-v1';
 var ITEMS = NR.items;
 function byArt(a) { return ITEMS.filter(function (x) { return x.art === a; })[0]; }
 function byId(id) { return NR.item(id); }
+/* PARTNER-CART-FIX: строка заказа; товара продавца в каталоге нет — показываем по названию */
+function lineInfo(l) {
+  var it = (l && l.id) ? byId(l.id) : null;
+  if (it) return { id: it.id, title: it.title, art: it.art, brand: it.brand, icon: it.icon };
+  return { id: '', title: (l && l.title) || 'Товар', art: '', brand: '', icon: '📦' };
+}
 
 var acc = document.getElementById('accountApp');
 var $ = function (s, r) { return (r || document).querySelector(s); };
@@ -4613,7 +4683,7 @@ function heading(t, d, right) { return '<header class="ph"><div><h1>' + t + '</h
 function empty(icn, t, p, btn) { return '<div class="acc-empty"><span class="stat-ic">' + ic(icn) + '</span><h2>' + t + '</h2><p>' + p + '</p>' + (btn || '') + '</div>'; }
 function findBtn() { return '<button class="btn btn-amber" type="button" data-act="go-catalog">' + ic('searches') + 'Найти запчасть</button>'; }
 function thumbsHTML(o, max) {
-  var out = o.lines.slice(0, max).map(function (l) { var it = byId(l.id); return '<span class="th" title="' + esc(it.title) + '" aria-hidden="true">' + it.icon + (l.q > 1 ? '<span class="q">×' + l.q + '</span>' : '') + '</span>'; }).join('');
+  var out = o.lines.slice(0, max).map(function (l) { var it = lineInfo(l); return '<span class="th" title="' + esc(it.title) + '" aria-hidden="true">' + it.icon + (l.q > 1 ? '<span class="q">×' + l.q + '</span>' : '') + '</span>'; }).join('');
   if (o.lines.length > max) out += '<span class="th more">+' + (o.lines.length - max) + '</span>';
   return '<div class="thumbs">' + out + '</div>';
 }
@@ -4657,7 +4727,7 @@ function orderCard(o) {
   var addr = S.addrs.filter(function (a) { return a.id === o.addr; })[0], addrTxt = addr ? addrLine(addr) : (o.addrText || '');
   var det = '';
   if (open) {
-    det = '<div class="o-det"><h3>Состав заказа</h3><ul class="lines">' + o.lines.map(function (l) { var it = byId(l.id); return '<li><span class="th" aria-hidden="true">' + it.icon + '</span><span><b><button class="plink" type="button" data-act="open-product" data-id="' + it.id + '">' + esc(it.title) + '</button></b><small>арт. ' + esc(it.art) + ' · ' + esc(it.brand) + '</small></span><span class="p">' + money(l.price * l.q) + '<small>' + l.q + ' × ' + money(l.price) + '</small></span></li>'; }).join('') + '</ul>' +
+    det = '<div class="o-det"><h3>Состав заказа</h3><ul class="lines">' + o.lines.map(function (l) { var it = lineInfo(l); return '<li><span class="th" aria-hidden="true">' + it.icon + '</span><span><b>' + (it.id ? '<button class="plink" type="button" data-act="open-product" data-id="' + it.id + '">' + esc(it.title) + '</button>' : esc(it.title)) + '</b>' + (it.art ? '<small>арт. ' + esc(it.art) + ' · ' + esc(it.brand) + '</small>' : '') + '</span><span class="p">' + money(l.price * l.q) + '<small>' + l.q + ' × ' + money(l.price) + '</small></span></li>'; }).join('') + '</ul>' +
       '<h3>Доставка и оплата</h3><dl class="kv"><dt>Способ</dt><dd>' + esc(o.method) + '</dd>' + (addrTxt ? '<dt>Адрес</dt><dd>' + esc(addrTxt) + '</dd>' : '') + (o.track ? '<dt>Трек-номер</dt><dd class="mono">' + esc(o.track) + '</dd>' : '') + '<dt>Оплата</dt><dd>' + esc(o.pay) + '</dd><dt>Товары</dt><dd>' + money(sum) + '</dd><dt>Доставка</dt><dd>' + (o.delivery ? money(o.delivery) : (o.deliveryNote || 'Бесплатно')) + '</dd><dt>Итого</dt><dd class="tot">' + money(tot) + '</dd></dl>' +
       '<h3>История заказа</h3><ul class="tl">' + timelineHTML(o) + '</ul></div>';
   }
@@ -5965,8 +6035,13 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
   function addrText(a) { return a ? [a.postal_code, a.city, a.address_1].filter(Boolean).join(', ') : ''; }
   function mapOrder(o) {
     var lines = (o.items || []).map(function (it) {
-      var id = itemIdBySku(it.variant_sku || it.subtitle, it.product_title || it.title, (it.unit_price || 0) / 100);
-      return id ? { id: id, q: it.quantity, price: (it.unit_price || 0) / 100 } : null;
+      var price = (it.unit_price || 0) / 100;
+      var id = itemIdBySku(it.variant_sku || it.subtitle, it.product_title || it.title, price);
+      if (id) return { id: id, q: it.quantity, price: price };
+      /* PARTNER-CART-FIX: товар продавца в каталоге не лежит — строку заказа
+         показываем по названию, без ссылки на карточку */
+      var lineTitle = it.product_title || it.title || '';
+      return lineTitle ? { id: '', title: lineTitle, q: it.quantity, price: price } : null;
     }).filter(Boolean);
     var sm = (o.shipping_methods || [])[0] || {};
     var created = Date.parse(o.created_at) || Date.now();
@@ -6078,6 +6153,11 @@ if (/^#cabinet(\/|$)/.test(location.hash)) {
       /* PARTNER-CART: товара партнёра в каталоге магазина нет — позиция уходит «под заказ»:
          только название, количество и цена (в копейках, как считает магазин) */
       else if (it && it.partner) out.push({ custom: true, title: it.title, q: pair[1], unit_price: Math.round(Number(it.price) * 100) });
+      /* PARTNER-CART-FIX: карточка ещё не подгрузилась — берём её из корзины */
+      else if (/^ppprod_/.test(String(pair[0])) && cartPartnerSnaps[pair[0]]) {
+        var snap = cartPartnerSnaps[pair[0]];
+        out.push({ custom: true, title: snap.title, q: pair[1], unit_price: Math.round(Number(snap.price) * 100) });
+      }
       else missing.push(it ? it.title : pair[0]);
     });
     return { lines: out, missing: missing };
